@@ -14,7 +14,11 @@ export function saveInvestigations(items: Investigation[]): void {
 }
 export async function requestAnalysis(input: AnalysisRequest, signal?: AbortSignal): Promise<AnalysisResult> {
   const res = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal });
-  const data: unknown = await res.json();
+  // Hosting platforms can answer with plain text or HTML (e.g. a crashed or timed-out function).
+  const text = await res.text();
+  let data: unknown;
+  try { data = JSON.parse(text); }
+  catch { throw new Error(res.ok ? 'The server returned an unreadable response.' : `Server error (HTTP ${res.status}). Check the server logs.`); }
   if (!res.ok) {
     const message = typeof data === 'object' && data !== null && 'error' in data ? String(data.error) : `HTTP ${res.status}`;
     throw new Error(message);

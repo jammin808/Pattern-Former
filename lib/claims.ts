@@ -1,5 +1,5 @@
-import type { AnalystDraft } from './schema';
-import type { Claim, EvidenceSource } from './types';
+import type { AnalystDraft } from './schema.js';
+import type { Claim, EvidenceSource } from './types.js';
 
 // Matching a literal excerpt to supplied material confirms quotation presence only.
 // It does not confirm that the material is authentic, accurate, or entails the claim.

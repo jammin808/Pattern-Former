@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { analysisRequestSchema } from '../lib/schema';
-import { configuredProvider, runAnalysis } from '../lib/reasoning';
+import { analysisRequestSchema } from '../lib/schema.js';
+import { configuredProvider, runAnalysis } from '../lib/reasoning.js';
 
 // Compatible with Vercel's Node serverless function convention and the local Node server.
 type ApiRequest = IncomingMessage & { body?: unknown };

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { config } from 'dotenv';
-import handler from '../api/analyze';
-import { configuredProvider } from '../lib/reasoning';
+import handler from '../api/analyze.js';
+import { configuredProvider } from '../lib/reasoning.js';
 
 config({ path: '.env.local' });
 config({ path: '.env' });

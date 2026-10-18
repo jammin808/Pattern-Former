@@ -1,218 +1,183 @@
-import React, { useState, useEffect } from 'react';
-import { AnalysisMode, Message } from './types';
-import { generateAnalysis } from './services/geminiService';
-import AnalysisDisplay from './components/AnalysisDisplay';
-import { Send, Terminal, Shield, Zap, Layers, Activity } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Activity, AlertTriangle, ArrowRight, BookOpen, Check, ChevronDown, Download, FileText, GitBranch, Layers, Loader2, Network, Plus, Search, Send, Shield, Square, Trash2 } from 'lucide-react';
+import type { AnalysisMode, AnalysisResult, Claim, EvidenceSource, Investigation } from './lib/types';
+import { exportJSON, exportMarkdown, readInvestigations, requestAnalysis, saveInvestigations } from './services/client';
+import './styles.css';
 
-const App: React.FC = () => {
-  const [query, setQuery] = useState('');
-  const [mode, setMode] = useState<AnalysisMode>(AnalysisMode.MEDIUM);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [apiKey, setApiKey] = useState<string>('');
-  const [isApiKeySet, setIsApiKeySet] = useState(false);
+type Tab = 'overview' | 'claims' | 'challenge' | 'structure' | 'sources';
+const modes: AnalysisMode[] = ['LIGHT', 'MEDIUM', 'HEAVY', 'ADVERSARIAL'];
+const modeDescription: Record<AnalysisMode, string> = {
+  LIGHT: 'Fast framing and direct analysis',
+  MEDIUM: 'Analysis plus independent challenge',
+  HEAVY: 'Full challenge and adjudication',
+  ADVERSARIAL: 'Full scrutiny and opposing arguments',
+};
+const newInvestigation = (): Investigation => ({ id: crypto.randomUUID(), name: 'Untitled investigation', createdAt: new Date().toISOString(), sources: [], results: [] });
 
-  useEffect(() => {
-    // In a real deployed environment, process.env.API_KEY would be used via the build system.
-    // However, per instructions, we must assume it is available or injected.
-    // If process.env.API_KEY is available, we use it automatically.
-    if (process.env.API_KEY) {
-      setApiKey(process.env.API_KEY);
-      setIsApiKeySet(true);
-    }
-  }, []);
+function saveFile(name: string, content: string, type: string): void {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function Article({ text }: { text: string }) {
+  return <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown></div>;
+}
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return <section className="section"><h3>{title}</h3>{children}</section>;
+}
+function StatementList({ items }: { items: string[] }) {
+  return items.length ? <ul className="statement-list">{items.map((item, i) => <li key={`${i}-${item.slice(0, 20)}`}>{item}</li>)}</ul> : <p className="muted">No entries returned.</p>;
+}
 
-  const handleApiKeySubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (apiKey.trim().length > 0) {
-      setIsApiKeySet(true);
-    }
-  };
-
-  const handleSubmit = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!query.trim() || !apiKey) return;
-
-    const userMsg: Message = {
-      role: 'user',
-      content: query,
-      id: Date.now().toString(),
-      timestamp: Date.now(),
-    };
-
-    setMessages(prev => [...prev, userMsg]);
-    setQuery('');
-    setIsLoading(true);
-
-    try {
-      const responseText = await generateAnalysis({
-        prompt: userMsg.content,
-        mode: mode,
-        apiKey: apiKey
-      });
-
-      const modelMsg: Message = {
-        role: 'model',
-        content: responseText || "System error: No response generated.",
-        id: (Date.now() + 1).toString(),
-        mode: mode,
-        timestamp: Date.now(),
-      };
-
-      setMessages(prev => [...prev, modelMsg]);
-    } catch (error) {
-      const errorMsg: Message = {
-        role: 'model',
-        content: `**SYSTEM ERROR**: Analysis failed. \n\n\`${error instanceof Error ? error.message : 'Unknown error'}\``,
-        id: (Date.now() + 1).toString(),
-        mode: mode,
-        timestamp: Date.now(),
-      };
-      setMessages(prev => [...prev, errorMsg]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
-
-  if (!isApiKeySet) {
-    return (
-      <div className="min-h-screen bg-os-bg text-gray-300 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-os-panel border border-os-border p-8 rounded-lg shadow-2xl">
-           <div className="flex items-center justify-center mb-6 text-os-accent">
-              <Terminal size={48} />
-           </div>
-           <h1 className="text-xl font-mono text-center mb-2 font-bold text-white">SYSTEM INITIALIZATION</h1>
-           <p className="text-center text-sm mb-6 text-os-secondary">
-             Enter Google GenAI API Key to initialize PATTERN-FORMER OS.
-           </p>
-           <form onSubmit={handleApiKeySubmit} className="space-y-4">
-             <input 
-                type="password" 
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-..."
-                className="w-full bg-black/50 border border-os-border rounded p-3 text-sm focus:border-os-accent focus:outline-none font-mono"
-             />
-             <button 
-                type="submit"
-                disabled={!apiKey}
-                className="w-full bg-os-accent/10 hover:bg-os-accent/20 text-os-accent border border-os-accent/50 py-2 rounded font-mono text-sm transition-colors uppercase"
-             >
-               Mount System
-             </button>
-             <p className="text-xs text-center text-gray-600 mt-4">
-               Requires Gemini 3.0 Pro access for Deep Thinking capabilities.
-             </p>
-           </form>
+function ClaimCard({ claim, sources, selected, onClick }: { claim: Claim; sources: EvidenceSource[]; selected: boolean; onClick: () => void }) {
+  const sourceMap = new Map(sources.map(s => [s.id, s]));
+  return <div className={`claim-card ${selected ? 'selected' : ''}`}>
+    <button className="claim-head" onClick={onClick} aria-expanded={selected}>
+      <span className="monospace">{claim.id}</span>
+      <span className={`claim-status status-${claim.support}`}>{claim.support.replace('-', ' ')}</span>
+      <ChevronDown size={15} className={selected ? 'rotated' : ''}/>
+    </button>
+    <p>{claim.text}</p>
+    {selected && <div className="claim-detail">
+      <p><strong>Interpretation:</strong> {claim.explanation}</p>
+      <p className="muted small">Type: {claim.kind}. A quote match establishes only that the words appear in user-supplied material, not that the source or claim is true.</p>
+      {claim.citations.length ? claim.citations.map((citation, index) => <div className="citation" key={`${citation.sourceId}-${index}`}>
+        <div className="citation-head"><BookOpen size={14}/> {sourceMap.get(citation.sourceId)?.title || citation.sourceId}
+          <span className={citation.quoteMatches ? 'match' : 'nonmatch'}>{citation.quoteMatches ? 'Quote located' : 'Quote not located'}</span>
         </div>
-      </div>
-    );
+        <blockquote>{citation.excerpt}</blockquote>
+        {sourceMap.get(citation.sourceId)?.url && <a href={sourceMap.get(citation.sourceId)?.url} target="_blank" rel="noopener noreferrer">Source URL (unverified) ↗</a>}
+      </div>) : <p className="muted small">No allowed source excerpt was supplied for this claim.</p>}
+    </div>}
+  </div>;
+}
+
+function StructureMap({ result, sources, onSelectClaim }: { result: AnalysisResult; sources: EvidenceSource[]; onSelectClaim: (id: string) => void }) {
+  const claims = result.claims.slice(0, 6);
+  return <div className="map-canvas">
+    <p className="muted small">A dependency-oriented view of the current analysis. Edges show cited excerpts, not proven causal relationships.</p>
+    <div className="map-columns">
+      <div className="map-column"><h4>Problem</h4><div className="map-node root-node">{result.question}</div><h4>Hypotheses</h4>{result.hypotheses.slice(0, 4).map((h, i) => <div className="map-node" key={i}>{h}</div>)}</div>
+      <div className="map-column"><h4>Claims</h4>{claims.map(claim => <button key={claim.id} className="map-node map-action" onClick={() => onSelectClaim(claim.id)}><strong>{claim.id}</strong> {claim.text}</button>)}</div>
+      <div className="map-column"><h4>Supplied evidence</h4>{sources.length ? sources.map(s => <div className="map-node evidence-node" key={s.id}><BookOpen size={14}/><strong>{s.title}</strong><span className="muted small">Cited by {claims.filter(c => c.citations.some(x => x.sourceId === s.id)).length} claims</span></div>) : <div className="map-node muted">No source documents supplied</div>}</div>
+    </div>
+    <p className="muted small">Select a claim to inspect the linked quotations. This MVP is a relationship overview; it does not yet support graph editing or automated dependency propagation.</p>
+  </div>;
+}
+
+export default function App() {
+  const [items, setItems] = useState<Investigation[]>(readInvestigations);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [mode, setMode] = useState<AnalysisMode>('MEDIUM');
+  const [tab, setTab] = useState<Tab>('overview');
+  const [query, setQuery] = useState('');
+  const [sourceTitle, setSourceTitle] = useState('');
+  const [sourceURL, setSourceURL] = useState('');
+  const [sourceContent, setSourceContent] = useState('');
+  const [addingSource, setAddingSource] = useState(false);
+  const [selectedClaim, setSelectedClaim] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const active = items.find(i => i.id === activeId) ?? items[0];
+  const result = active?.results.find(r => r.id === runId) ?? active?.results.at(-1);
+  const hasResults = Boolean(result);
+
+  useEffect(() => { try { saveInvestigations(items); } catch { setError('Browser storage is full or unavailable. Export your work to avoid losing it.'); } }, [items]);
+
+  function makeProject(): Investigation {
+    const project = newInvestigation();
+    setItems(previous => [project, ...previous]);
+    setActiveId(project.id); setRunId(null); setTab('overview'); setError(null);
+    return project;
   }
 
-  return (
-    <div className="flex flex-col h-screen bg-os-bg text-gray-200 font-sans selection:bg-os-accent/30 selection:text-white">
-      {/* Header */}
-      <header className="h-14 border-b border-os-border bg-os-bg/95 backdrop-blur flex items-center justify-between px-6 shrink-0 z-10 sticky top-0">
-        <div className="flex items-center gap-2">
-          <Terminal size={18} className="text-os-accent" />
-          <h1 className="font-mono font-bold tracking-widest text-sm">PATTERN-FORMER <span className="text-xs text-os-secondary font-normal ml-2">v3.0-thinking</span></h1>
-        </div>
-        <div className="flex items-center gap-4 text-xs font-mono text-os-secondary">
-           <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-os-success animate-pulse"></div>
-              <span>ONLINE</span>
-           </div>
-        </div>
-      </header>
+  function updateProject(id: string, transform: (item: Investigation) => Investigation): void {
+    setItems(previous => previous.map(item => item.id === id ? transform(item) : item));
+  }
 
-      {/* Main Content */}
-      <AnalysisDisplay messages={messages} isLoading={isLoading} currentMode={mode} />
+  function addSource() {
+    if (sourceTitle.trim().length === 0 || sourceContent.trim().length < 10) { setError('Supply a title and at least 10 characters of source material.'); return; }
+    if (sourceURL.trim()) {
+      try { if (!/^https?:$/.test(new URL(sourceURL.trim()).protocol)) throw new Error(); }
+      catch { setError('Source URL must start with http:// or https://.'); return; }
+    }
+    const project = active || makeProject();
+    if (project.sources.length >= 8) { setError('The current limit is eight sources per investigation.'); return; }
+    const source: EvidenceSource = { id: `s_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`, title: sourceTitle.trim(), url: sourceURL.trim() || undefined, content: sourceContent.trim() };
+    if (source.content.length > 12000) { setError('Each source is limited to 12,000 characters.'); return; }
+    updateProject(project.id, item => ({ ...item, sources: [...item.sources, source] }));
+    setSourceTitle(''); setSourceURL(''); setSourceContent(''); setAddingSource(false); setError(null);
+  }
 
-      {/* Input Area */}
-      <div className="p-4 md:p-6 bg-os-bg border-t border-os-border shrink-0">
-        <div className="max-w-4xl mx-auto space-y-4">
-          
-          {/* Mode Selector */}
-          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none">
-             <button 
-               onClick={() => setMode(AnalysisMode.LIGHT)}
-               className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono border transition-all ${
-                 mode === AnalysisMode.LIGHT 
-                 ? 'bg-os-success/10 border-os-success text-os-success shadow-[0_0_10px_rgba(16,185,129,0.2)]' 
-                 : 'border-os-border text-os-secondary hover:border-os-secondary'
-               }`}
-             >
-               <Zap size={12} />
-               LIGHT
-             </button>
-             <button 
-               onClick={() => setMode(AnalysisMode.MEDIUM)}
-               className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono border transition-all ${
-                 mode === AnalysisMode.MEDIUM 
-                 ? 'bg-os-warning/10 border-os-warning text-os-warning shadow-[0_0_10px_rgba(245,158,11,0.2)]' 
-                 : 'border-os-border text-os-secondary hover:border-os-secondary'
-               }`}
-             >
-               <Activity size={12} />
-               MEDIUM
-             </button>
-             <button 
-               onClick={() => setMode(AnalysisMode.HEAVY)}
-               className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono border transition-all ${
-                 mode === AnalysisMode.HEAVY 
-                 ? 'bg-os-accent/10 border-os-accent text-os-accent shadow-[0_0_10px_rgba(0,240,255,0.2)]' 
-                 : 'border-os-border text-os-secondary hover:border-os-secondary'
-               }`}
-             >
-               <Layers size={12} />
-               HEAVY
-             </button>
-             <button 
-               onClick={() => setMode(AnalysisMode.ADVERSARIAL)}
-               className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono border transition-all ${
-                 mode === AnalysisMode.ADVERSARIAL
-                 ? 'bg-os-danger/10 border-os-danger text-os-danger shadow-[0_0_10px_rgba(239,68,68,0.2)]' 
-                 : 'border-os-border text-os-secondary hover:border-os-secondary'
-               }`}
-             >
-               <Shield size={12} />
-               ADVERSARIAL
-             </button>
-          </div>
+  async function submit(question = query) {
+    if (working || question.trim().length < 4) return;
+    const project = active || makeProject();
+    const controller = new AbortController(); abortRef.current = controller;
+    setWorking(true); setError(null);
+    try {
+      const prior = project.results.at(-1);
+      const context = prior ? `Earlier question: ${prior.question}\nEarlier conclusion: ${prior.conclusion}\nEarlier unknowns: ${prior.unknowns.join('; ')}`.slice(0, 4000) : undefined;
+      const response = await requestAnalysis({ question: question.trim(), mode, sources: project.sources, context }, controller.signal);
+      updateProject(project.id, item => ({ ...item, name: item.results.length === 0 ? question.trim().slice(0, 75) : item.name, results: [...item.results, response].slice(-12) }));
+      setActiveId(project.id); setRunId(response.id); setTab('overview'); setSelectedClaim(null); setQuery('');
+    } catch (e) {
+      if (!controller.signal.aborted) setError(e instanceof Error ? e.message : 'Analysis failed.');
+    } finally { setWorking(false); abortRef.current = null; }
+  }
 
-          {/* Input Box */}
-          <div className="relative group">
-            <textarea
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Input query for pattern analysis..."
-              className="w-full bg-os-panel border border-os-border rounded-lg p-4 pr-12 min-h-[60px] max-h-[200px] resize-none focus:outline-none focus:border-os-accent/50 font-mono text-sm transition-all shadow-inner"
-              rows={2}
-            />
-            <button
-              onClick={() => handleSubmit()}
-              disabled={isLoading || !query.trim()}
-              className="absolute right-3 bottom-3 p-2 rounded bg-os-accent text-os-bg hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <Send size={16} />
-            </button>
-          </div>
-          
-          <div className="text-[10px] text-center text-os-secondary font-mono">
-             PATTERN-FORMER OS v3.0 // CONFIDENCE BOUND REASONING
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+  function exportProject(kind: 'json' | 'md') {
+    if (!active) return;
+    const name = `pattern-former-${active.id.slice(0, 8)}.${kind}`;
+    saveFile(name, kind === 'json' ? exportJSON(active) : exportMarkdown(active), kind === 'json' ? 'application/json' : 'text/markdown');
+  }
 
-export default App;
+  function selectClaim(id: string) { setSelectedClaim(id); setTab('claims'); }
+  return <div className="app-layout">
+    <aside className="sidebar">
+      <div className="brand"><div className="brand-mark"><Network size={19}/></div><div><strong>PATTERN-FORMER</strong><span>REASONING WORKBENCH <b>0.1</b></span></div></div>
+      <button className="primary full" onClick={makeProject}><Plus size={16}/> New investigation</button>
+      <div className="side-label">INVESTIGATIONS <span>{items.length}</span></div>
+      <nav className="project-list" aria-label="Investigations">{items.map(item => <button key={item.id} className={`project-item ${active?.id === item.id ? 'active' : ''}`} onClick={() => { setActiveId(item.id); setRunId(null); setTab('overview'); setError(null); }}><FileText size={15}/><span>{item.name}</span><small>{item.results.length}</small></button>)}</nav>
+      <div className="sidebar-bottom"><Shield size={15}/><span>Local browser storage. Not encrypted. Avoid sensitive material on shared devices.</span></div>
+    </aside>
+
+    <main className="workspace">
+      <header className="topbar"><div className="breadcrumbs"><span>WORKSPACE</span><ArrowRight size={13}/><strong>{active?.name || 'New analysis'}</strong></div><div className="top-actions"><button className="text-button" onClick={makeProject}><Plus size={15}/> New</button>{active && <><button className="text-button" onClick={() => exportProject('md')} title="Export Markdown"><Download size={15}/> Report</button><button className="text-button" onClick={() => exportProject('json')} title="Export JSON"><Download size={15}/> JSON</button></>}</div></header>
+      <div className="workspace-scroll"><div className="content-width">
+        <div className="page-heading"><span className="eyebrow"><Activity size={14}/> ANALYTICAL INTEGRITY ENGINE</span><h1>Ask a better question.<br/><em>Get a defensible answer.</em></h1><p>A structured workspace for assumptions, evidence, competing explanations and adversarial review. Sources are user supplied and not independently authenticated.</p></div>
+        {error && <div className="error-banner" role="alert"><AlertTriangle size={16}/><span>{error}</span><button onClick={() => setError(null)}>Dismiss</button></div>}
+        <section className="composer"><div className="composer-header"><span>ANALYSIS REQUEST</span><div className="mode-caption">{modeDescription[mode]}</div></div>
+          <textarea value={query} onChange={e => setQuery(e.target.value)} maxLength={3000} placeholder="Enter a proposition, decision, claim, or research question..." rows={4} aria-label="Analysis question" disabled={working}/>
+          <div className="composer-footer"><div className="mode-options" role="group" aria-label="Analysis depth">{modes.map(m => <button type="button" key={m} className={mode === m ? 'mode active' : 'mode'} onClick={() => setMode(m)} aria-pressed={mode === m}>{m}</button>)}</div>
+            {working ? <button className="cancel-button" onClick={() => abortRef.current?.abort()}><Square size={14}/> Stop waiting</button> : <button className="primary" onClick={() => { void submit(); }} disabled={query.trim().length < 4}><Send size={15}/> Analyse</button>}</div>
+        </section>
+        {working && <div className="working" role="status"><Loader2 className="spin" size={19}/><div><strong>Reasoning stages running</strong><span>Constructing the argument, challenging alternatives and adjudicating where the selected mode requires it.</span></div></div>}
+
+        <div className="analysis-header"><div><span className="eyebrow">CURRENT INVESTIGATION</span><h2>{active?.name || 'Untitled investigation'}</h2></div><div className="analysis-summary"><span><BookOpen size={14}/> {active?.sources.length || 0} sources</span><span><Layers size={14}/> {active?.results.length || 0} runs</span></div></div>
+        {active && active.results.length > 1 && <div className="history-row"><label htmlFor="run-choice">Analysis history</label><select id="run-choice" value={result?.id || ''} onChange={e => setRunId(e.target.value)}>{[...active.results].reverse().map((r, index) => <option key={r.id} value={r.id}>{new Date(r.createdAt).toLocaleString()} · {r.mode} · {r.question.slice(0, 62)}{index === 0 ? ' (latest)' : ''}</option>)}</select></div>}
+        <div className="tabs" role="tablist" aria-label="Analysis views">{([['overview','Overview',FileText],['claims','Claim ledger',Check],['challenge','Challenge',Shield],['structure','Structure',GitBranch],['sources','Sources',BookOpen]] as const).map(([name,label,Icon]) => <button key={name} className={tab === name ? 'tab active' : 'tab'} onClick={() => setTab(name)} role="tab" aria-selected={tab === name}><Icon size={15}/>{label}</button>)}</div>
+
+        {tab === 'overview' && (result ? <div className="results-grid"><div><div className="result-card prominent"><div className="result-topline"><span className="eyebrow">SYNTHESIS</span><span className={`confidence confidence-${result.confidence.toLowerCase()}`}>{result.confidence} CONFIDENCE</span></div><h3>Conclusion</h3><Article text={result.conclusion}/></div>
+          <Section title="Problem framing"><Article text={result.frame}/></Section><Section title="Competing hypotheses"><StatementList items={result.hypotheses}/></Section><Section title="Key assumptions"><StatementList items={result.assumptions}/></Section></div>
+          <aside className="insights"><div className="result-card"><div className="eyebrow">ANALYSIS RECORD</div><div className="stat"><strong>{result.claims.length}</strong><span>Recorded claims</span></div><div className="stat"><strong>{result.challenges.length}</strong><span>Independent objections</span></div><div className="stat"><strong>{result.methodology.steps.length}</strong><span>Reasoning stages</span></div><p className="small muted">{result.methodology.model} · {(result.methodology.durationMs / 1000).toFixed(1)}s</p></div><div className="result-card"><h3>Unresolved questions</h3><StatementList items={result.unknowns}/></div><button className="secondary full" onClick={() => setTab('claims')}>Inspect supporting claims <ArrowRight size={15}/></button></aside></div> : <div className="empty-state"><Search size={30}/><h3>Start an investigation</h3><p>Enter a question, add sources if available, and run an analysis. Light mode is a single pass; Heavy and Adversarial add separate challenge and adjudication steps.</p></div>)}
+
+        {tab === 'claims' && (result ? <div className="claims-list"><div className="notice"><AlertTriangle size={17}/><span><strong>Evidence discipline:</strong> “Quote matched” means an excerpt appears in the supplied text. It is not an independent fact check. “Inferred” is model interpretation. Claims can still be wrong.</span></div>{result.claims.length ? result.claims.map(c => <ClaimCard key={c.id} claim={c} sources={active?.sources || []} selected={selectedClaim === c.id} onClick={() => setSelectedClaim(selectedClaim === c.id ? null : c.id)}/>) : <p className="empty-inline">No claims returned.</p>}</div> : <div className="empty-state">Run an analysis to generate claim records.</div>)}
+
+        {tab === 'challenge' && (result ? <div className="challenge-layout"><div><div className="result-card"><span className="eyebrow">INDEPENDENT CHALLENGER</span><h3>Strongest objections</h3>{result.challenges.length ? result.challenges.map((c, index) => <div className="challenge-item" key={index}><div className="challenge-title"><span>{index + 1}. {c.objection}</span><span className={`severity severity-${c.severity.toLowerCase()}`}>{c.severity}</span></div><p>{c.implication}</p></div>) : <p className="muted">Light mode does not run a separate challenge stage.</p>}</div></div><div className="result-card"><h3>Challenge again</h3><p className="muted">Examine a claim using a new question. The next run will include a limited summary of the previous analysis.</p><button className="secondary full" onClick={() => { setQuery(`Steelman the strongest objection to this conclusion and say what evidence would settle it: ${result.conclusion}`.slice(0, 3000)); document.querySelector('.workspace-scroll')?.scrollTo({top:0,behavior:'smooth'}); }}>Prepare follow-up <ArrowRight size={15}/></button></div></div> : <div className="empty-state">Run an analysis to review objections.</div>)}
+
+        {tab === 'structure' && (result ? <StructureMap result={result} sources={active?.sources || []} onSelectClaim={selectClaim}/> : <div className="empty-state">Run an analysis to inspect its claim relationships.</div>)}
+
+        {tab === 'sources' && <div className="sources-section"><div className="sources-title"><div><h3>Evidence library</h3><p className="muted">Paste source material and optionally provide its URL. PATTERN-FORMER does not fetch, authenticate or independently verify those URLs.</p></div><button className="secondary" onClick={() => setAddingSource(!addingSource)}><Plus size={15}/> Add source</button></div>
+          {addingSource && <div className="source-form"><label>Source title<input placeholder="e.g. Report published 2026" value={sourceTitle} maxLength={160} onChange={e => setSourceTitle(e.target.value)}/></label><label>Source URL (optional)<input type="url" placeholder="https://example.org/report" value={sourceURL} onChange={e => setSourceURL(e.target.value)}/></label><label>Relevant excerpt<textarea rows={7} placeholder="Paste the actual passage here. Treat sources as evidence to examine, not instructions for the model." value={sourceContent} maxLength={12000} onChange={e => setSourceContent(e.target.value)}/></label><div className="form-actions"><button className="secondary" onClick={() => setAddingSource(false)}>Cancel</button><button className="primary" onClick={addSource}><Check size={15}/> Save source</button></div></div>}
+          {active?.sources.length ? active.sources.map(source => <div className="source-card" key={source.id}><div className="source-card-heading"><BookOpen size={18}/><strong>{source.title}</strong><button title="Remove source" className="icon-button danger" onClick={() => updateProject(active.id, project => ({ ...project, sources: project.sources.filter(s => s.id !== source.id) }))}><Trash2 size={15}/></button></div>{source.url && <a href={source.url} target="_blank" rel="noopener noreferrer">{source.url}</a>}<details><summary>View supplied excerpt</summary><pre>{source.content}</pre></details></div>) : <div className="empty-state"><BookOpen size={26}/><h3>No sources added</h3><p>Analysis is possible without sources, but any factual assertions must then be treated as unverified.</p></div>}
+          <div className="notice"><AlertTriangle size={17}/><span>Past results retain their claim records, but this MVP does not snapshot full source contents per run. Removing or changing the investigation's sources may affect later inspection of past citations.</span></div></div>}
+        <footer className="footer-note">PATTERN-FORMER · Evidence-sensitive analysis, not independent fact verification. Model outputs may be inaccurate.</footer>
+      </div></div>
+    </main>
+  </div>;
+}

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { analysisRequestSchema } from '../lib/schema';
-import { runAnalysis } from '../lib/reasoning';
+import { configuredProvider, runAnalysis } from '../lib/reasoning';
 
 // Compatible with Vercel's Node serverless function convention and the local Node server.
 type ApiRequest = IncomingMessage & { body?: unknown };
@@ -35,8 +35,8 @@ export default async function handler(req: ApiRequest, res: ServerResponse): Pro
   if (req.headers['content-type']?.split(';')[0]?.trim() !== 'application/json') {
     json(res, 415, { error: 'Content-Type must be application/json.' }); return;
   }
-  if (!process.env.GEMINI_API_KEY) {
-    json(res, 503, { error: 'Server is not configured with GEMINI_API_KEY.' }); return;
+  if (!configuredProvider()) {
+    json(res, 503, { error: 'Server is not configured with ANTHROPIC_API_KEY (or GEMINI_API_KEY).' }); return;
   }
   try {
     const body = await readBody(req);
@@ -45,7 +45,7 @@ export default async function handler(req: ApiRequest, res: ServerResponse): Pro
       json(res, 400, { error: 'Invalid request.', issues: parsed.error.issues.map(i => ({ path: i.path.join('.'), message: i.message })) });
       return;
     }
-    const result = await runAnalysis(parsed.data, process.env.GEMINI_API_KEY);
+    const result = await runAnalysis(parsed.data);
     json(res, 200, result);
   } catch (error) {
     if (error instanceof Error && error.message === 'PAYLOAD_TOO_LARGE') {

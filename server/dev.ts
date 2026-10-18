@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { config } from 'dotenv';
 import handler from '../api/analyze';
+import { configuredProvider } from '../lib/reasoning';
 
 config({ path: '.env.local' });
 config({ path: '.env' });
@@ -9,7 +10,7 @@ createServer((req, res) => {
   if (req.url === '/api/analyze') { void handler(req, res); return; }
   if (req.url === '/api/health') {
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ ok: true, configured: Boolean(process.env.GEMINI_API_KEY) }));
+    res.end(JSON.stringify({ ok: true, provider: configuredProvider() }));
     return;
   }
   res.writeHead(404); res.end('Not found');

@@ -1,10 +1,11 @@
 # PATTERN-FORMER | Reasoning Workbench MVP
 
-A standalone Vite/React + TypeScript application with a server-side Gemini API, user-supplied evidence, structured claim ledger, independent adversarial review, and investigation history. This is a **working implementation candidate**, not a verified reasoning engine or a production-ready research platform.
+A standalone Vite/React + TypeScript application with a server-side model API (Anthropic Claude by default, Gemini optional), user-supplied evidence, structured claim ledger, independent adversarial review, and investigation history. This is a **working implementation candidate**, not a verified reasoning engine or a production-ready research platform.
 
 ## What's implemented
 
-- **No browser API key:** Gemini calls run only in `api/analyze.ts` (also callable by the local Node dev server). Credentials come exclusively from the server environment.
+- **No browser API key:** Model calls run only in `api/analyze.ts` (also callable by the local Node dev server). Credentials come exclusively from the server environment: `ANTHROPIC_API_KEY` (preferred, uses Claude with structured outputs and server-side refusal fallback) or `GEMINI_API_KEY`.
+- **Depth maps to effort:** on Claude, Light/Medium/Heavy runs use `low`/`medium`/`high` effort.
 - **Three depth pipelines:** Light uses one analyst call. Medium adds an independent challenger call; Heavy/Adversarial additionally call an adjudicator. The challenger sees the initial question and supplied evidence, not the analyst's answer.
 - **Structured claims and provenance:** The server normalises model-generated claims and only accepts citation IDs present in supplied evidence. Quoted text is compared against the actual pasted material.
 - **Precise trust labels:** `quote-matched` means source text contains a quotation, **not** that the source is authentic or the claim is substantiated. `inferred` and `unverified` remain visibly distinct.
@@ -14,14 +15,14 @@ A standalone Vite/React + TypeScript application with a server-side Gemini API, 
 
 ## Requirements
 
-Node.js 22 or newer, npm, a Gemini API key and a configured model that supports JSON output.
+Node.js 22 or newer, npm, and either an Anthropic API key (default model `claude-opus-5-5`, override with `ANTHROPIC_MODEL`) or a Gemini API key (`GEMINI_MODEL`).
 
 ## Local setup
 
 ```bash
 npm install
 cp .env.example .env.local
-# Edit .env.local and provide GEMINI_API_KEY (server-side only).
+# Edit .env.local and provide ANTHROPIC_API_KEY (or GEMINI_API_KEY). Server-side only.
 npm run dev
 ```
 
@@ -29,7 +30,7 @@ Open http://localhost:3000. The Vite UI proxies `/api/analyze` to the local Node
 
 ### Deploying to Vercel
 
-1. Set `GEMINI_API_KEY` (and optionally `GEMINI_MODEL`) as **server environment variables** in Vercel. Never use `VITE_GEMINI_API_KEY`.
+1. Set `ANTHROPIC_API_KEY` (optionally `ANTHROPIC_MODEL`) — or `GEMINI_API_KEY`/`GEMINI_MODEL` — as **server environment variables** in Vercel. Never use a `VITE_`-prefixed key.
 2. Use framework preset **Vite**, build command `npm run build` and output directory `dist`.
 3. Vercel will serve the serverless `api/analyze.ts` endpoint alongside the static Vite app.
 4. Validate deployment with a non-sensitive test query before inviting external users.
@@ -38,7 +39,7 @@ Open http://localhost:3000. The Vite UI proxies `/api/analyze` to the local Node
 
 ## Privacy and evidence limits
 
-- Uploaded text is sent to the Gemini API when a question is analysed. Avoid uploading sensitive or third-party confidential material without appropriate permission and policy review.
+- Uploaded text is sent to the configured model provider (Anthropic or Google) when a question is analysed. Avoid uploading sensitive or third-party confidential material without appropriate permission and policy review.
 - Projects are stored in your current browser's `localStorage`, unencrypted. Clear browser site data to delete local copies. Export first if you want to retain a project.
 - URLs are recorded as attribution metadata only. **They are not fetched or verified.** Claims are not externally fact-checked. Matching a string in supplied text is not validating its provenance, credibility, entailment or causal interpretation.
 - The model may make mistakes, including inventing interpretations. The structured output schema limits shape, not truthfulness. Evidence labels represent workflow status, not a scientific probability.
@@ -59,10 +60,10 @@ This application replaces the original AI Studio prototype. The superseded `cons
 
 ## Relevant code
 
-- `lib/reasoning.ts`: model orchestration and structured analysis stages.
+- `lib/reasoning.ts`: provider selection (Anthropic/Gemini), model orchestration and structured analysis stages.
 - `lib/claims.ts`: deterministic claim/evidence mapping and quote matching.
 - `lib/schema.ts`: request and model-output schemas.
-- `api/analyze.ts`: private Gemini endpoint, validation and safe errors.
+- `api/analyze.ts`: private model endpoint, validation and safe errors.
 - `App.tsx`: investigation workspace, claim inspection and exports.
 - `tests/claims.test.ts`: baseline pure unit tests.
 

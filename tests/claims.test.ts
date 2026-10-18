@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { quoteIsPresent, normaliseClaims, formatEvidence } from '../lib/claims';
 import { analysisRequestSchema } from '../lib/schema';
+import { configuredProvider } from '../lib/reasoning';
 
 const source = { id: 's1', title: 'Study', content: 'The experiment involved 120 volunteers with no random assignment.' };
 const draft = {
@@ -36,4 +37,9 @@ test('rejects duplicate source IDs, excessive input and malformed URLs', () => {
 });
 test('source text is visibly delimited as untrusted input', () => {
   assert.match(formatEvidence([source]), /UNTRUSTED EXCERPT/);
+});
+test('prefers an Anthropic key from the environment, then Gemini', () => {
+  assert.equal(configuredProvider({ ANTHROPIC_API_KEY: 'a', GEMINI_API_KEY: 'g' }), 'anthropic');
+  assert.equal(configuredProvider({ GEMINI_API_KEY: 'g' }), 'gemini');
+  assert.equal(configuredProvider({}), null);
 });

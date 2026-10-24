@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Ban, Check, Loader2, RefreshCw, Search, Shield, Users } from 'lucide-react';
+import { AlertTriangle, Ban, Check, Loader2, RefreshCw, Search, Users } from 'lucide-react';
 import type { AdminUser } from '../lib/types';
 import { getAdminData, setDefaultLimit, updateAdminUser } from '../services/client';
 
@@ -43,7 +43,7 @@ function UserRow({ user, defaultLimit, isSelf, onChanged, onError }: {
       <div><strong>{user.name || user.email}</strong><span>{user.email}</span></div>
       {user.isAdmin && <span className="tag">ADMIN</span>}
     </div></td>
-    <td><span className={`claim-status ${user.status === 'blocked' ? 'status-unverified' : 'status-quote-matched'}`}>{user.status}</span></td>
+    <td><span className={`support ${user.status === 'blocked' ? 'support-unverified' : 'support-quote-matched'}`}>{user.status}</span></td>
     <td className="usage-cell">
       <div className="usage-numbers"><strong>{formatTokens(user.month_tokens)}</strong><span>/ {effectiveLimit === null ? 'unlimited' : formatTokens(effectiveLimit)}</span></div>
       <UsageBar used={user.month_tokens} limit={effectiveLimit}/>
@@ -51,11 +51,11 @@ function UserRow({ user, defaultLimit, isSelf, onChanged, onError }: {
     </td>
     <td>{user.isAdmin ? <span className="muted small">Admins are not limited</span> : <form className="limit-form" onSubmit={e => { e.preventDefault(); if (dirty) void apply({ monthly_token_limit: parsed }); }}>
       <input aria-label={`Monthly token limit for ${user.email}`} inputMode="numeric" placeholder={`Default (${formatTokens(defaultLimit)})`} value={draft} onChange={e => setDraft(e.target.value)} disabled={saving}/>
-      <button className="secondary" type="submit" disabled={!dirty || saving} title="Save limit"><Check size={14}/></button>
+      <button className="button secondary" type="submit" disabled={!dirty || saving} title="Save limit"><Check size={14}/></button>
       {parsed === 'invalid' && <span className="nonmatch small">Whole number, or empty for default</span>}
     </form>}</td>
     <td className="muted small">{new Date(user.last_seen_at).toLocaleDateString()}</td>
-    <td>{!isSelf && <button className={user.status === 'blocked' ? 'secondary' : 'cancel-button'} disabled={saving}
+    <td>{!isSelf && <button className={user.status === 'blocked' ? 'button secondary' : 'button danger-outline'} disabled={saving}
       onClick={() => void apply({ status: user.status === 'blocked' ? 'active' : 'blocked' })}>
       {user.status === 'blocked' ? <><Check size={14}/> Unblock</> : <><Ban size={14}/> Block</>}
     </button>}</td>
@@ -82,8 +82,8 @@ export function AdminPanel({ currentUserId }: { currentUserId: string }) {
     return (data?.users ?? []).filter(u => !q || u.email.includes(q) || (u.name ?? '').toLowerCase().includes(q));
   }, [data, filter]);
 
-  if (!data) return error ? <div className="error-banner" role="alert"><AlertTriangle size={16}/><span>{error}</span></div>
-    : <div className="working"><Loader2 className="spin" size={19}/><div><strong>Loading users</strong></div></div>;
+  if (!data) return error ? <div className="banner warning" role="alert"><AlertTriangle size={16}/><span>{error}</span></div>
+    : <div className="pending-inline" role="status"><Loader2 className="spin" size={18}/> Loading users…</div>;
 
   const monthTotal = data.users.reduce((sum, u) => sum + u.month_tokens, 0);
   const blocked = data.users.filter(u => u.status === 'blocked').length;
@@ -98,27 +98,27 @@ export function AdminPanel({ currentUserId }: { currentUserId: string }) {
   }
 
   return <div className="admin-panel">
-    <div className="page-heading"><span className="eyebrow"><Shield size={14}/> ADMINISTRATION</span><h1>Users and token use</h1>
+    <div className="admin-heading"><h2>Users and token use</h2>
       <p>Usage is counted per calendar month (UTC) and includes failed runs. A limit is checked before each run starts, so one run can finish slightly over it.</p></div>
-    {error && <div className="error-banner" role="alert"><AlertTriangle size={16}/><span>{error}</span><button onClick={() => setError(null)}>Dismiss</button></div>}
+    {error && <div className="banner warning" role="alert"><AlertTriangle size={16}/><span>{error}</span><button onClick={() => setError(null)}>Dismiss</button></div>}
     <div className="admin-stats">
-      <div className="result-card"><div className="stat"><strong>{data.users.length}</strong><span>Users</span></div></div>
-      <div className="result-card"><div className="stat"><strong>{formatTokens(monthTotal)}</strong><span>Tokens this month</span></div></div>
-      <div className="result-card"><div className="stat"><strong>{blocked}</strong><span>Blocked</span></div></div>
-      <form className="result-card default-limit" onSubmit={e => { e.preventDefault(); void saveDefault(); }}>
+      <div className="stat-card"><div className="stat"><strong>{data.users.length}</strong><span>Users</span></div></div>
+      <div className="stat-card"><div className="stat"><strong>{formatTokens(monthTotal)}</strong><span>Tokens this month</span></div></div>
+      <div className="stat-card"><div className="stat"><strong>{blocked}</strong><span>Blocked</span></div></div>
+      <form className="stat-card default-limit" onSubmit={e => { e.preventDefault(); void saveDefault(); }}>
         <label htmlFor="default-limit">Default monthly limit</label>
         <div className="limit-form"><input id="default-limit" inputMode="numeric" value={defaultDraft} onChange={e => setDefaultDraft(e.target.value)} disabled={savingDefault}/>
-          <button className="primary" type="submit" disabled={typeof parsedDefault !== 'number' || parsedDefault === data.defaultMonthlyTokenLimit || savingDefault}>Save</button></div>
+          <button className="button primary" type="submit" disabled={typeof parsedDefault !== 'number' || parsedDefault === data.defaultMonthlyTokenLimit || savingDefault}>Save</button></div>
         <span className="muted small">Applies to everyone without their own limit. 0 stops all non-admin runs.</span>
       </form>
     </div>
     <div className="admin-toolbar">
       <label className="search"><Search size={14}/><input placeholder="Filter by name or email" value={filter} onChange={e => setFilter(e.target.value)}/></label>
-      <button className="text-button" onClick={() => void load()}><RefreshCw size={14}/> Refresh</button>
+      <button className="link-button" onClick={() => void load()}><RefreshCw size={14}/> Refresh</button>
     </div>
     {users.length ? <div className="table-scroll"><table className="admin-table">
       <thead><tr><th>User</th><th>Status</th><th>This month</th><th>Monthly limit</th><th>Last seen</th><th/></tr></thead>
       <tbody>{users.map(u => <UserRow key={u.id} user={u} defaultLimit={data.defaultMonthlyTokenLimit} isSelf={u.id === currentUserId} onChanged={load} onError={setError}/>)}</tbody>
-    </table></div> : <div className="empty-state"><Users size={26}/><h3>No users found</h3></div>}
+    </table></div> : <div className="panel-empty"><Users size={22}/><p>No users match that filter.</p></div>}
   </div>;
 }

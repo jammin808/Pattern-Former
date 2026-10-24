@@ -1,73 +1,41 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Activity, AlertTriangle, ArrowRight, BookOpen, Check, ChevronDown, Download, FileText, GitBranch, Layers, Loader2, LogOut, Network, Plus, Search, Send, Shield, Square, Trash2, Users } from 'lucide-react';
-import type { Account, AnalysisMode, AnalysisResult, Claim, EvidenceSource, Investigation } from './lib/types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, BookOpen, Download, Loader2, LogOut, Menu, MoreHorizontal, Pencil, Plus, RotateCcw, Trash2, Users, X } from 'lucide-react';
+import type { Account, AnalysisMode, Investigation } from './lib/types';
 import { ApiError, exportJSON, exportMarkdown, getAccount, readInvestigations, requestAnalysis, saveInvestigations, signOut } from './services/client';
 import { SignIn } from './components/SignIn';
 import { AdminPanel, UsageBar, formatTokens } from './components/AdminPanel';
+import { AnswerCard } from './components/AnswerCard';
+import { Composer } from './components/Composer';
+import { EvidencePanel } from './components/EvidencePanel';
+import { DEPTHS, depthOf, typicalSeconds } from './components/depth';
 import './styles.css';
 
-type Tab = 'overview' | 'claims' | 'challenge' | 'structure' | 'sources';
-const modes: AnalysisMode[] = ['LIGHT', 'MEDIUM', 'HEAVY', 'ADVERSARIAL'];
-const modeDescription: Record<AnalysisMode, string> = {
-  LIGHT: 'Fast framing and direct analysis',
-  MEDIUM: 'Analysis plus independent challenge',
-  HEAVY: 'Full challenge and adjudication',
-  ADVERSARIAL: 'Full scrutiny and opposing arguments',
-};
-const newInvestigation = (): Investigation => ({ id: crypto.randomUUID(), name: 'Untitled investigation', createdAt: new Date().toISOString(), sources: [], results: [] });
+const EXAMPLES = [
+  { title: 'Test a causal claim', question: 'Does this study show that the treatment caused the improvement?' },
+  { title: 'Weigh a decision', question: 'Should we renew the lease or move, given these terms?' },
+  { title: 'Check a document', question: 'What does this letter commit us to, and what does it leave open?' },
+];
+const DEPTH_KEY = 'pattern-former:depth';
+const EVIDENCE_KEY = 'pattern-former:evidence-open';
+
+const newInvestigation = (): Investigation => ({ id: crypto.randomUUID(), name: 'New investigation', createdAt: new Date().toISOString(), sources: [], results: [] });
+
+function readPreference<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  try { const v = localStorage.getItem(key); return allowed.includes(v as T) ? v as T : fallback; } catch { return fallback; }
+}
+function writePreference(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch { /* Preferences are a convenience only. */ }
+}
 
 function saveFile(name: string, content: string, type: string): void {
   const url = URL.createObjectURL(new Blob([content], { type }));
   const a = document.createElement('a'); a.href = url; a.download = name; a.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-function Article({ text }: { text: string }) {
-  return <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown></div>;
-}
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return <section className="section"><h3>{title}</h3>{children}</section>;
-}
-function StatementList({ items }: { items: string[] }) {
-  return items.length ? <ul className="statement-list">{items.map((item, i) => <li key={`${i}-${item.slice(0, 20)}`}>{item}</li>)}</ul> : <p className="muted">No entries returned.</p>;
-}
 
-function ClaimCard({ claim, sources, selected, onClick }: { claim: Claim; sources: EvidenceSource[]; selected: boolean; onClick: () => void }) {
-  const sourceMap = new Map(sources.map(s => [s.id, s]));
-  return <div className={`claim-card ${selected ? 'selected' : ''}`}>
-    <button className="claim-head" onClick={onClick} aria-expanded={selected}>
-      <span className="monospace">{claim.id}</span>
-      <span className={`claim-status status-${claim.support}`}>{claim.support.replace('-', ' ')}</span>
-      <ChevronDown size={15} className={selected ? 'rotated' : ''}/>
-    </button>
-    <p>{claim.text}</p>
-    {selected && <div className="claim-detail">
-      <p><strong>Interpretation:</strong> {claim.explanation}</p>
-      <p className="muted small">Type: {claim.kind}. A quote match establishes only that the words appear in user-supplied material, not that the source or claim is true.</p>
-      {claim.citations.length ? claim.citations.map((citation, index) => <div className="citation" key={`${citation.sourceId}-${index}`}>
-        <div className="citation-head"><BookOpen size={14}/> {sourceMap.get(citation.sourceId)?.title || citation.sourceId}
-          <span className={citation.quoteMatches ? 'match' : 'nonmatch'}>{citation.quoteMatches ? 'Quote located' : 'Quote not located'}</span>
-        </div>
-        <blockquote>{citation.excerpt}</blockquote>
-        {sourceMap.get(citation.sourceId)?.url && <a href={sourceMap.get(citation.sourceId)?.url} target="_blank" rel="noopener noreferrer">Source URL (unverified) ↗</a>}
-      </div>) : <p className="muted small">No allowed source excerpt was supplied for this claim.</p>}
-    </div>}
-  </div>;
-}
-
-function StructureMap({ result, sources, onSelectClaim }: { result: AnalysisResult; sources: EvidenceSource[]; onSelectClaim: (id: string) => void }) {
-  const claims = result.claims.slice(0, 6);
-  return <div className="map-canvas">
-    <p className="muted small">A dependency-oriented view of the current analysis. Edges show cited excerpts, not proven causal relationships.</p>
-    <div className="map-columns">
-      <div className="map-column"><h4>Problem</h4><div className="map-node root-node">{result.question}</div><h4>Hypotheses</h4>{result.hypotheses.slice(0, 4).map((h, i) => <div className="map-node" key={i}>{h}</div>)}</div>
-      <div className="map-column"><h4>Claims</h4>{claims.map(claim => <button key={claim.id} className="map-node map-action" onClick={() => onSelectClaim(claim.id)}><strong>{claim.id}</strong> {claim.text}</button>)}</div>
-      <div className="map-column"><h4>Supplied evidence</h4>{sources.length ? sources.map(s => <div className="map-node evidence-node" key={s.id}><BookOpen size={14}/><strong>{s.title}</strong><span className="muted small">Cited by {claims.filter(c => c.citations.some(x => x.sourceId === s.id)).length} claims</span></div>) : <div className="map-node muted">No source documents supplied</div>}</div>
-    </div>
-    <p className="muted small">Select a claim to inspect the linked quotations. This MVP is a relationship overview; it does not yet support graph editing or automated dependency propagation.</p>
-  </div>;
+function nextResetDate(): string {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toLocaleDateString(undefined, { day: 'numeric', month: 'long', timeZone: 'UTC' });
 }
 
 export default function App() {
@@ -81,141 +49,293 @@ export default function App() {
     });
   }, []);
   const handleSignedIn = useCallback((next: Account) => { setNotice(undefined); setAccount(next); }, []);
-  if (account === undefined) return <div className="auth-screen"><Loader2 className="spin" size={22}/></div>;
+  if (account === undefined) return <div className="auth-screen"><Loader2 className="spin" size={22} aria-label="Loading"/></div>;
   if (!account) return <SignIn onSignedIn={handleSignedIn} notice={notice}/>;
   return <Workspace key={account.user.id} account={account} onAccountChange={setAccount}
     onSignOut={() => { void signOut().catch(() => undefined); setAccount(null); }}/>;
 }
 
+interface PendingTurn { investigationId: string; question: string; mode: AnalysisMode; startedAt: number }
+interface FailedTurn { investigationId: string; question: string; mode: AnalysisMode; error: string }
+
+function PendingAnswer({ turn, typical }: { turn: PendingTurn; typical: number | null }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(t); }, []);
+  const seconds = Math.max(0, Math.floor((now - turn.startedAt) / 1000));
+  const depth = depthOf(turn.mode);
+  return <div className="pending" role="status" aria-live="polite">
+    <div className="pending-head"><strong>Working on a {depth.label.toLowerCase()} answer</strong>
+      <span className="muted tabular" aria-label={`${seconds} seconds elapsed`}>{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</span></div>
+    <ul className="stages">{depth.stages.map(s => <li key={s}><Loader2 className="spin" size={15} aria-hidden="true"/>{s}</li>)}</ul>
+    <span className="muted small">{typical ? `Your recent ${depth.label.toLowerCase()} answers took about ${typical} seconds.` : 'This can take up to a minute or two at deeper levels.'} You can keep typing your next question.</span>
+  </div>;
+}
+
 function Workspace({ account, onAccountChange, onSignOut }: { account: Account; onAccountChange: (account: Account) => void; onSignOut: () => void }) {
   const userId = account.user.id;
-  const [view, setView] = useState<'work' | 'admin'>('work');
   const [items, setItems] = useState<Investigation[]>(() => readInvestigations(userId));
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [runId, setRunId] = useState<string | null>(null);
-  const [mode, setMode] = useState<AnalysisMode>('MEDIUM');
-  const [tab, setTab] = useState<Tab>('overview');
+  const [view, setView] = useState<'work' | 'admin'>('work');
+  const [mode, setModeState] = useState<AnalysisMode>(() => readPreference(DEPTH_KEY, DEPTHS.map(d => d.mode), 'MEDIUM'));
   const [query, setQuery] = useState('');
-  const [sourceTitle, setSourceTitle] = useState('');
-  const [sourceURL, setSourceURL] = useState('');
-  const [sourceContent, setSourceContent] = useState('');
+  const [pending, setPending] = useState<PendingTurn | null>(null);
+  const [failed, setFailed] = useState<FailedTurn | null>(null);
+  const [evidenceOpen, setEvidenceOpen] = useState(() => readPreference(EVIDENCE_KEY, ['open', 'closed'] as const, 'open') === 'open' && window.innerWidth >= 1200);
   const [addingSource, setAddingSource] = useState(false);
-  const [selectedClaim, setSelectedClaim] = useState<string | null>(null);
-  const [working, setWorking] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [undo, setUndo] = useState<{ item: Investigation; index: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+
   const active = items.find(i => i.id === activeId) ?? items[0];
-  const result = active?.results.find(r => r.id === runId) ?? active?.results.at(-1);
-  const hasResults = Boolean(result);
+  const activePending = pending && active && pending.investigationId === active.id ? pending : null;
+  const activeFailed = failed && active && failed.investigationId === active.id ? failed : null;
+  const isEmpty = !active || (active.results.length === 0 && !activePending && !activeFailed);
+  const typical = useMemo(() => (pending ? typicalSeconds(items, pending.mode) : null), [items, pending]);
+  const { monthTokens, limit } = account.allowance;
+  const blockedReason = account.user.status === 'blocked' ? 'Your account has been blocked, so you can’t ask new questions. Your saved investigations are still here.'
+    : limit !== null && monthTokens >= limit ? `You’ve used this month’s ${formatTokens(limit)} tokens. Your allowance resets on ${nextResetDate()}.` : null;
 
   useEffect(() => { try { saveInvestigations(userId, items); } catch { setError('Browser storage is full or unavailable. Export your work to avoid losing it.'); } }, [items, userId]);
+  useEffect(() => { if (!undo) return; const t = window.setTimeout(() => setUndo(null), 8000); return () => window.clearTimeout(t); }, [undo]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setNavOpen(false); if (window.innerWidth < 1200) setEvidenceOpen(false); } };
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Bring the newest turn into view: the pending card while waiting, the start of the new answer when it lands.
+  const lastResultId = active?.results.at(-1)?.id;
+  useEffect(() => {
+    if (activePending) threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });
+  }, [activePending]);
+  useEffect(() => {
+    if (activeFailed) threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });
+  }, [activeFailed]);
+  useEffect(() => {
+    if (lastResultId) document.getElementById(`turn-${lastResultId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [lastResultId]);
+
+  function setMode(next: AnalysisMode) { setModeState(next); writePreference(DEPTH_KEY, next); }
+  function toggleEvidence(open: boolean, adding = false) {
+    setEvidenceOpen(open); setAddingSource(open && adding);
+    if (window.innerWidth >= 1200) writePreference(EVIDENCE_KEY, open ? 'open' : 'closed');
+  }
+
+  function updateProject(id: string, transform: (item: Investigation) => Investigation, toFront = false): void {
+    setItems(previous => {
+      const next = previous.map(item => item.id === id ? transform(item) : item);
+      if (!toFront) return next;
+      const moved = next.find(item => item.id === id);
+      return moved ? [moved, ...next.filter(item => item.id !== id)] : next;
+    });
+  }
 
   function makeProject(): Investigation {
+    setView('work'); setNavOpen(false); setError(null);
+    // Reuse an untouched investigation rather than piling up empty ones.
+    if (active && active.results.length === 0 && active.sources.length === 0 && !activePending) {
+      inputRef.current?.focus(); return active;
+    }
     const project = newInvestigation();
     setItems(previous => [project, ...previous]);
-    setActiveId(project.id); setRunId(null); setTab('overview'); setError(null); setView('work');
+    setActiveId(project.id); setQuery('');
     return project;
   }
 
-  function updateProject(id: string, transform: (item: Investigation) => Investigation): void {
-    setItems(previous => previous.map(item => item.id === id ? transform(item) : item));
-  }
+  function selectProject(id: string) { setActiveId(id); setView('work'); setNavOpen(false); setError(null); setRenaming(null); }
 
-  function addSource() {
-    if (sourceTitle.trim().length === 0 || sourceContent.trim().length < 10) { setError('Supply a title and at least 10 characters of source material.'); return; }
-    if (sourceURL.trim()) {
-      try { if (!/^https?:$/.test(new URL(sourceURL.trim()).protocol)) throw new Error(); }
-      catch { setError('Source URL must start with http:// or https://.'); return; }
+  function addSource({ title, url, content }: { title: string; url: string; content: string }): string | null {
+    if (!title.trim()) return 'Give the source a title.';
+    if (content.trim().length < 10) return 'Paste at least 10 characters of text to quote from.';
+    if (url.trim()) {
+      try { if (!/^https?:$/.test(new URL(url.trim()).protocol)) throw new Error(); }
+      catch { return 'Links must start with http:// or https://.'; }
     }
-    const project = active || makeProject();
-    if (project.sources.length >= 8) { setError('The current limit is eight sources per investigation.'); return; }
-    const source: EvidenceSource = { id: `s_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`, title: sourceTitle.trim(), url: sourceURL.trim() || undefined, content: sourceContent.trim() };
-    if (source.content.length > 12000) { setError('Each source is limited to 12,000 characters.'); return; }
+    const project = active ?? makeProject();
+    if (project.sources.length >= 8) return 'An investigation can have up to 8 sources. Remove one first.';
+    const source = { id: `s_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`, title: title.trim(), url: url.trim() || undefined, content: content.trim() };
     updateProject(project.id, item => ({ ...item, sources: [...item.sources, source] }));
-    setSourceTitle(''); setSourceURL(''); setSourceContent(''); setAddingSource(false); setError(null);
+    setAddingSource(false);
+    return null;
   }
 
-  async function submit(question = query) {
-    if (working || question.trim().length < 4) return;
-    const project = active || makeProject();
+  function deleteProject(id: string) {
+    const index = items.findIndex(i => i.id === id);
+    if (index < 0) return;
+    setUndo({ item: items[index], index });
+    setItems(previous => previous.filter(i => i.id !== id));
+    if (active?.id === id) setActiveId(null);
+  }
+
+  function restoreProject() {
+    if (!undo) return;
+    setItems(previous => { const next = [...previous]; next.splice(Math.min(undo.index, next.length), 0, undo.item); return next; });
+    setActiveId(undo.item.id); setUndo(null);
+  }
+
+  async function submit(questionText = query, depth = mode) {
+    const question = questionText.trim();
+    if (pending || blockedReason || question.length < 4) return;
+    const project = active ?? makeProject();
     const controller = new AbortController(); abortRef.current = controller;
-    setWorking(true); setError(null);
+    setPending({ investigationId: project.id, question, mode: depth, startedAt: Date.now() });
+    setFailed(null); setError(null); setQuery('');
     try {
       const prior = project.results.at(-1);
       const context = prior ? `Earlier question: ${prior.question}\nEarlier conclusion: ${prior.conclusion}\nEarlier unknowns: ${prior.unknowns.join('; ')}`.slice(0, 4000) : undefined;
-      const response = await requestAnalysis({ question: question.trim(), mode, sources: project.sources, context }, controller.signal);
-      updateProject(project.id, item => ({ ...item, name: item.results.length === 0 ? question.trim().slice(0, 75) : item.name, results: [...item.results, response].slice(-12) }));
-      setActiveId(project.id); setRunId(response.id); setTab('overview'); setSelectedClaim(null); setQuery('');
+      const response = await requestAnalysis({ question, mode: depth, sources: project.sources, context }, controller.signal);
+      updateProject(project.id, item => ({
+        ...item,
+        name: item.results.length === 0 && item.name === 'New investigation' ? question.slice(0, 80) : item.name,
+        results: [...item.results, response].slice(-12),
+      }), true);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) { onSignOut(); return; }
-      if (!controller.signal.aborted) setError(e instanceof Error ? e.message : 'Analysis failed.');
+      if (controller.signal.aborted) setQuery(current => current || question);
+      else setFailed({ investigationId: project.id, question, mode: depth, error: e instanceof Error ? e.message : 'The analysis failed.' });
     } finally {
-      setWorking(false); abortRef.current = null;
-      // Refresh the allowance shown in the sidebar after every attempt.
+      setPending(null); abortRef.current = null;
+      // Refresh the allowance after every attempt, since failed runs use tokens too.
       getAccount().then(onAccountChange).catch(() => undefined);
     }
   }
 
-  function exportProject(kind: 'json' | 'md') {
-    if (!active) return;
-    const name = `pattern-former-${active.id.slice(0, 8)}.${kind}`;
-    saveFile(name, kind === 'json' ? exportJSON(active) : exportMarkdown(active), kind === 'json' ? 'application/json' : 'text/markdown');
+  function followUp(question: string, depth?: AnalysisMode) {
+    setQuery(question.slice(0, 3000));
+    if (depth) setMode(depth);
+    window.setTimeout(() => { inputRef.current?.focus(); inputRef.current?.setSelectionRange(question.length, question.length); }, 0);
   }
 
-  function selectClaim(id: string) { setSelectedClaim(id); setTab('claims'); }
-  return <div className="app-layout">
-    <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><Network size={19}/></div><div><strong>PATTERN-FORMER</strong><span>REASONING WORKBENCH <b>0.2</b></span></div></div>
-      <button className="primary full" onClick={makeProject}><Plus size={16}/> New investigation</button>
-      <div className="side-label">INVESTIGATIONS <span>{items.length}</span></div>
-      <nav className="project-list" aria-label="Investigations">{items.map(item => <button key={item.id} className={`project-item ${active?.id === item.id ? 'active' : ''}`} onClick={() => { setActiveId(item.id); setRunId(null); setTab('overview'); setError(null); setView('work'); }}><FileText size={15}/><span>{item.name}</span><small>{item.results.length}</small></button>)}</nav>
-      <div className="usage-panel">
-        <div className="side-label">THIS MONTH <span>{account.allowance.limit === null ? 'UNLIMITED' : `${Math.min(100, Math.round(account.allowance.limit ? account.allowance.monthTokens / account.allowance.limit * 100 : 100))}%`}</span></div>
-        <UsageBar used={account.allowance.monthTokens} limit={account.allowance.limit}/>
-        <p className="small muted">{formatTokens(account.allowance.monthTokens)} {account.allowance.limit === null ? 'tokens used this month' : `of ${formatTokens(account.allowance.limit)} tokens this month`}</p>
+  function exportProject(kind: 'json' | 'md') {
+    if (!active) return;
+    const slug = active.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'investigation';
+    saveFile(`${slug}.${kind}`, kind === 'json' ? exportJSON(active) : exportMarkdown(active), kind === 'json' ? 'application/json' : 'text/markdown');
+  }
+
+  const composer = (large: boolean) => <Composer value={query} onChange={setQuery} onSubmit={() => void submit()} mode={mode} onModeChange={setMode}
+    busy={Boolean(pending)} onStop={() => abortRef.current?.abort()} sources={active?.sources ?? []} onOpenEvidence={adding => toggleEvidence(true, adding)}
+    inputRef={inputRef} blockedReason={blockedReason} large={large}
+    placeholder={large ? 'For example: does this contract let the supplier pass on the delay costs?' : 'Ask a follow-up, or challenge the answer…'}/>;
+
+  const usedPercent = limit === null ? null : limit === 0 ? 100 : Math.min(100, Math.round(monthTokens / limit * 100));
+
+  return <div className="shell">
+    <aside className={`sidebar${navOpen ? ' open' : ''}`} aria-label="Investigations and account">
+      <div className="brand">
+        <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" className="brand-tile"/><path d="M8 19 L14 9 L20 19 M10.5 15 H17.5" className="brand-mark" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+        <strong>Pattern-Former</strong>
+        <button type="button" className="icon-button nav-close" onClick={() => setNavOpen(false)} aria-label="Close menu"><X size={18}/></button>
       </div>
-      <div className="account-row">
-        {account.user.picture ? <img src={account.user.picture} alt="" referrerPolicy="no-referrer"/> : <span className="avatar-fallback">{(account.user.name || account.user.email)[0]?.toUpperCase()}</span>}
-        <div><strong>{account.user.name || account.user.email}</strong><span>{account.user.email}</span></div>
-        <button className="icon-button" onClick={onSignOut} title="Sign out" aria-label="Sign out"><LogOut size={15}/></button>
+      <button type="button" className="button primary full" onClick={() => makeProject()}><Plus size={16}/> New investigation</button>
+      <nav className="investigations" aria-label="Investigations">
+        <h2 className="nav-heading">Investigations</h2>
+        {items.length ? items.map(item => {
+          const answering = pending?.investigationId === item.id;
+          return <button type="button" key={item.id} className={`nav-item${active?.id === item.id && view === 'work' ? ' current' : ''}`} aria-current={active?.id === item.id && view === 'work' ? 'page' : undefined} onClick={() => selectProject(item.id)}>
+            <span className="nav-title">{item.name}</span>
+            <span className="nav-meta">{answering ? 'Answering…' : `${item.results.length} question${item.results.length === 1 ? '' : 's'}${item.sources.length ? ` · ${item.sources.length} source${item.sources.length === 1 ? '' : 's'}` : ''}`}</span>
+          </button>;
+        }) : <p className="muted small nav-empty">Your investigations will appear here.</p>}
+      </nav>
+      <div className="sidebar-foot">
+        {account.user.isAdmin && <button type="button" className={`nav-item admin-link${view === 'admin' ? ' current' : ''}`} onClick={() => { setView('admin'); setNavOpen(false); }}><span className="nav-title"><Users size={15}/> Users and usage</span></button>}
+        <div className="usage-card">
+          <div className="usage-head"><span>This month</span><span className="muted tabular">{usedPercent === null ? 'No limit' : `${usedPercent}%`}</span></div>
+          <UsageBar used={monthTokens} limit={limit}/>
+          <span className="muted small tabular">{limit === null ? `${formatTokens(monthTokens)} tokens used` : `${formatTokens(monthTokens)} of ${formatTokens(limit)} tokens`}</span>
+        </div>
+        <div className="account-row">
+          {account.user.picture ? <img src={account.user.picture} alt="" referrerPolicy="no-referrer"/> : <span className="avatar-fallback" aria-hidden="true">{(account.user.name || account.user.email)[0]?.toUpperCase()}</span>}
+          <div><strong>{account.user.name || account.user.email}</strong><span>{account.user.email}</span></div>
+          <button type="button" className="icon-button" onClick={onSignOut} aria-label="Sign out" title="Sign out"><LogOut size={16}/></button>
+        </div>
+        <p className="muted tiny">Investigations are saved in this browser only, unencrypted.</p>
       </div>
-      <div className="sidebar-bottom"><Shield size={15}/><span>Investigations are stored in this browser, unencrypted. Avoid sensitive material on shared devices.</span></div>
     </aside>
+    {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} aria-hidden="true"/>}
 
-    <main className="workspace">
-      <header className="topbar"><div className="breadcrumbs"><span>WORKSPACE</span><ArrowRight size={13}/><strong>{active?.name || 'New analysis'}</strong></div><div className="top-actions">{account.user.isAdmin && <button className={view === 'admin' ? 'text-button active-view' : 'text-button'} onClick={() => setView(view === 'admin' ? 'work' : 'admin')}><Users size={15}/> {view === 'admin' ? 'Workspace' : 'Admin'}</button>}<button className="text-button" onClick={makeProject}><Plus size={15}/> New</button>{active && <><button className="text-button" onClick={() => exportProject('md')} title="Export Markdown"><Download size={15}/> Report</button><button className="text-button" onClick={() => exportProject('json')} title="Export JSON"><Download size={15}/> JSON</button></>}</div></header>
-      <div className="workspace-scroll"><div className="content-width">{view === 'admin' ? <AdminPanel currentUserId={userId}/> : <>
-        {account.user.status === 'blocked' && <div className="error-banner" role="alert"><AlertTriangle size={16}/><span>Your account has been blocked, so new analyses are disabled. Saved investigations remain available.</span></div>}
-        <div className="page-heading"><span className="eyebrow"><Activity size={14}/> ANALYTICAL INTEGRITY ENGINE</span><h1>Ask a better question.<br/><em>Get a defensible answer.</em></h1><p>A structured workspace for assumptions, evidence, competing explanations and adversarial review. Sources are user supplied and not independently authenticated.</p></div>
-        {error && <div className="error-banner" role="alert"><AlertTriangle size={16}/><span>{error}</span><button onClick={() => setError(null)}>Dismiss</button></div>}
-        <section className="composer"><div className="composer-header"><span>ANALYSIS REQUEST</span><div className="mode-caption">{modeDescription[mode]}</div></div>
-          <textarea value={query} onChange={e => setQuery(e.target.value)} maxLength={3000} placeholder="Enter a proposition, decision, claim, or research question..." rows={4} aria-label="Analysis question" disabled={working}/>
-          <div className="composer-footer"><div className="mode-options" role="group" aria-label="Analysis depth">{modes.map(m => <button type="button" key={m} className={mode === m ? 'mode active' : 'mode'} onClick={() => setMode(m)} aria-pressed={mode === m}>{m}</button>)}</div>
-            {working ? <button className="cancel-button" onClick={() => abortRef.current?.abort()}><Square size={14}/> Stop waiting</button> : <button className="primary" onClick={() => { void submit(); }} disabled={query.trim().length < 4}><Send size={15}/> Analyse</button>}</div>
+    <main className="main">
+      <header className="topbar">
+        <button type="button" className="icon-button nav-open" onClick={() => setNavOpen(true)} aria-label="Open menu"><Menu size={18}/></button>
+        {view === 'admin' ? <h1 className="topbar-title">Users and usage</h1>
+          : renaming !== null && active ? <form className="rename" onSubmit={e => { e.preventDefault(); const name = renaming.trim(); if (name) updateProject(active.id, item => ({ ...item, name: name.slice(0, 120) })); setRenaming(null); }}>
+            <label htmlFor="rename-input" className="visually-hidden">Investigation name</label>
+            <input id="rename-input" autoFocus value={renaming} maxLength={120} onChange={e => setRenaming(e.target.value)} onBlur={e => e.currentTarget.form?.requestSubmit()} onKeyDown={e => { if (e.key === 'Escape') setRenaming(null); }}/>
+          </form>
+          : <div className="topbar-title-row">
+            <h1 className="topbar-title">{active?.name ?? 'New investigation'}</h1>
+            {active && <button type="button" className="icon-button" onClick={() => setRenaming(active.name)} aria-label="Rename investigation" title="Rename"><Pencil size={15}/></button>}
+          </div>}
+        {view === 'work' && <div className="topbar-actions">
+          <button type="button" className={`button secondary${evidenceOpen ? ' pressed' : ''}`} aria-pressed={evidenceOpen} onClick={() => toggleEvidence(!evidenceOpen)}><BookOpen size={15}/> Evidence{active?.sources.length ? ` (${active.sources.length})` : ''}</button>
+          {active && <details className="menu">
+            <summary className="icon-button" aria-label="More actions"><MoreHorizontal size={18}/></summary>
+            <div className="menu-list" role="menu">
+              <button type="button" role="menuitem" disabled={!active.results.length} onClick={e => { exportProject('md'); e.currentTarget.closest('details')?.removeAttribute('open'); }}><Download size={15}/> Export as Markdown</button>
+              <button type="button" role="menuitem" onClick={e => { exportProject('json'); e.currentTarget.closest('details')?.removeAttribute('open'); }}><Download size={15}/> Export as JSON</button>
+              <button type="button" role="menuitem" className="danger" disabled={pending?.investigationId === active.id} onClick={e => { e.currentTarget.closest('details')?.removeAttribute('open'); deleteProject(active.id); }}><Trash2 size={15}/> Delete investigation</button>
+            </div>
+          </details>}
+        </div>}
+      </header>
+
+      {view === 'admin' ? <div className="admin-scroll"><AdminPanel currentUserId={userId}/></div> : <div className="work">
+        <section className="conversation" aria-label="Conversation">
+          <div className="thread" ref={threadRef}>
+            <div className="thread-inner">
+              {error && <div className="banner warning" role="alert"><AlertTriangle size={16}/><span>{error}</span><button type="button" className="link-button" onClick={() => setError(null)}>Dismiss</button></div>}
+              {isEmpty ? <div className="start">
+                <h2 className="start-title">What do you want to examine?</h2>
+                <p className="start-lead">Ask about a claim, a decision or a document. You get a conclusion, the claims behind it graded against your sources, and the strongest objections.</p>
+                {composer(true)}
+                <section aria-labelledby="depth-heading" className="start-section">
+                  <h3 id="depth-heading">How deep should it go?</h3>
+                  <div className="depth-grid" role="radiogroup" aria-labelledby="depth-heading">
+                    {DEPTHS.map(d => <button type="button" key={d.mode} role="radio" aria-checked={mode === d.mode} className={`depth-card${mode === d.mode ? ' selected' : ''}`} onClick={() => setMode(d.mode)}>
+                      <strong>{d.label}</strong><span>{d.summary}</span><span className="muted small">{d.calls}</span>
+                    </button>)}
+                  </div>
+                </section>
+                <section aria-labelledby="examples-heading" className="start-section">
+                  <h3 id="examples-heading">Or start from an example</h3>
+                  <div className="example-grid">{EXAMPLES.map(x => <button type="button" key={x.title} className="example" onClick={() => followUp(x.question)}><strong>{x.title}</strong><span>{x.question}</span></button>)}</div>
+                </section>
+              </div> : <>
+                {active!.results.map((r, i) => <div className="turn" key={r.id} id={`turn-${r.id}`}>
+                  <p className="question">{r.question}</p>
+                  <AnswerCard result={r} sources={active!.sources} isLatest={i === active!.results.length - 1 && !activePending} onFollowUp={followUp}/>
+                </div>)}
+                {activePending && <div className="turn"><p className="question">{activePending.question}</p><PendingAnswer turn={activePending} typical={typical}/></div>}
+                {activeFailed && <div className="turn">
+                  <p className="question">{activeFailed.question}</p>
+                  <div className="failed" role="alert">
+                    <p><AlertTriangle size={16}/> <strong>No answer this time.</strong> {activeFailed.error}</p>
+                    <div className="failed-actions">
+                      <button type="button" className="button secondary" disabled={Boolean(pending) || Boolean(blockedReason)} onClick={() => void submit(activeFailed.question, activeFailed.mode)}><RotateCcw size={14}/> Try again</button>
+                      <button type="button" className="link-button" onClick={() => { followUp(activeFailed.question, activeFailed.mode); setFailed(null); }}>Edit the question</button>
+                    </div>
+                  </div>
+                </div>}
+              </>}
+            </div>
+          </div>
+          {!isEmpty && <div className="dock">{composer(false)}</div>}
         </section>
-        {working && <div className="working" role="status"><Loader2 className="spin" size={19}/><div><strong>Reasoning stages running</strong><span>Constructing the argument, challenging alternatives and adjudicating where the selected mode requires it.</span></div></div>}
-
-        <div className="analysis-header"><div><span className="eyebrow">CURRENT INVESTIGATION</span><h2>{active?.name || 'Untitled investigation'}</h2></div><div className="analysis-summary"><span><BookOpen size={14}/> {active?.sources.length || 0} sources</span><span><Layers size={14}/> {active?.results.length || 0} runs</span></div></div>
-        {active && active.results.length > 1 && <div className="history-row"><label htmlFor="run-choice">Analysis history</label><select id="run-choice" value={result?.id || ''} onChange={e => setRunId(e.target.value)}>{[...active.results].reverse().map((r, index) => <option key={r.id} value={r.id}>{new Date(r.createdAt).toLocaleString()} · {r.mode} · {r.question.slice(0, 62)}{index === 0 ? ' (latest)' : ''}</option>)}</select></div>}
-        <div className="tabs" role="tablist" aria-label="Analysis views">{([['overview','Overview',FileText],['claims','Claim ledger',Check],['challenge','Challenge',Shield],['structure','Structure',GitBranch],['sources','Sources',BookOpen]] as const).map(([name,label,Icon]) => <button key={name} className={tab === name ? 'tab active' : 'tab'} onClick={() => setTab(name)} role="tab" aria-selected={tab === name}><Icon size={15}/>{label}</button>)}</div>
-
-        {tab === 'overview' && (result ? <div className="results-grid"><div><div className="result-card prominent"><div className="result-topline"><span className="eyebrow">SYNTHESIS</span><span className={`confidence confidence-${result.confidence.toLowerCase()}`}>{result.confidence} CONFIDENCE</span></div><h3>Conclusion</h3><Article text={result.conclusion}/></div>
-          <Section title="Problem framing"><Article text={result.frame}/></Section><Section title="Competing hypotheses"><StatementList items={result.hypotheses}/></Section><Section title="Key assumptions"><StatementList items={result.assumptions}/></Section></div>
-          <aside className="insights"><div className="result-card"><div className="eyebrow">ANALYSIS RECORD</div><div className="stat"><strong>{result.claims.length}</strong><span>Recorded claims</span></div><div className="stat"><strong>{result.challenges.length}</strong><span>Independent objections</span></div><div className="stat"><strong>{result.methodology.steps.length}</strong><span>Reasoning stages</span></div><p className="small muted">{result.methodology.model} · {(result.methodology.durationMs / 1000).toFixed(1)}s{result.methodology.tokens && ` · ${formatTokens(result.methodology.tokens.input + result.methodology.tokens.output)} tokens`}</p></div><div className="result-card"><h3>Unresolved questions</h3><StatementList items={result.unknowns}/></div><button className="secondary full" onClick={() => setTab('claims')}>Inspect supporting claims <ArrowRight size={15}/></button></aside></div> : <div className="empty-state"><Search size={30}/><h3>Start an investigation</h3><p>Enter a question, add sources if available, and run an analysis. Light mode is a single pass; Heavy and Adversarial add separate challenge and adjudication steps.</p></div>)}
-
-        {tab === 'claims' && (result ? <div className="claims-list"><div className="notice"><AlertTriangle size={17}/><span><strong>Evidence discipline:</strong> “Quote matched” means an excerpt appears in the supplied text. It is not an independent fact check. “Inferred” is model interpretation. Claims can still be wrong.</span></div>{result.claims.length ? result.claims.map(c => <ClaimCard key={c.id} claim={c} sources={active?.sources || []} selected={selectedClaim === c.id} onClick={() => setSelectedClaim(selectedClaim === c.id ? null : c.id)}/>) : <p className="empty-inline">No claims returned.</p>}</div> : <div className="empty-state">Run an analysis to generate claim records.</div>)}
-
-        {tab === 'challenge' && (result ? <div className="challenge-layout"><div><div className="result-card"><span className="eyebrow">INDEPENDENT CHALLENGER</span><h3>Strongest objections</h3>{result.challenges.length ? result.challenges.map((c, index) => <div className="challenge-item" key={index}><div className="challenge-title"><span>{index + 1}. {c.objection}</span><span className={`severity severity-${c.severity.toLowerCase()}`}>{c.severity}</span></div><p>{c.implication}</p></div>) : <p className="muted">Light mode does not run a separate challenge stage.</p>}</div></div><div className="result-card"><h3>Challenge again</h3><p className="muted">Examine a claim using a new question. The next run will include a limited summary of the previous analysis.</p><button className="secondary full" onClick={() => { setQuery(`Steelman the strongest objection to this conclusion and say what evidence would settle it: ${result.conclusion}`.slice(0, 3000)); document.querySelector('.workspace-scroll')?.scrollTo({top:0,behavior:'smooth'}); }}>Prepare follow-up <ArrowRight size={15}/></button></div></div> : <div className="empty-state">Run an analysis to review objections.</div>)}
-
-        {tab === 'structure' && (result ? <StructureMap result={result} sources={active?.sources || []} onSelectClaim={selectClaim}/> : <div className="empty-state">Run an analysis to inspect its claim relationships.</div>)}
-
-        {tab === 'sources' && <div className="sources-section"><div className="sources-title"><div><h3>Evidence library</h3><p className="muted">Paste source material and optionally provide its URL. PATTERN-FORMER does not fetch, authenticate or independently verify those URLs.</p></div><button className="secondary" onClick={() => setAddingSource(!addingSource)}><Plus size={15}/> Add source</button></div>
-          {addingSource && <div className="source-form"><label>Source title<input placeholder="e.g. Report published 2026" value={sourceTitle} maxLength={160} onChange={e => setSourceTitle(e.target.value)}/></label><label>Source URL (optional)<input type="url" placeholder="https://example.org/report" value={sourceURL} onChange={e => setSourceURL(e.target.value)}/></label><label>Relevant excerpt<textarea rows={7} placeholder="Paste the actual passage here. Treat sources as evidence to examine, not instructions for the model." value={sourceContent} maxLength={12000} onChange={e => setSourceContent(e.target.value)}/></label><div className="form-actions"><button className="secondary" onClick={() => setAddingSource(false)}>Cancel</button><button className="primary" onClick={addSource}><Check size={15}/> Save source</button></div></div>}
-          {active?.sources.length ? active.sources.map(source => <div className="source-card" key={source.id}><div className="source-card-heading"><BookOpen size={18}/><strong>{source.title}</strong><button title="Remove source" className="icon-button danger" onClick={() => updateProject(active.id, project => ({ ...project, sources: project.sources.filter(s => s.id !== source.id) }))}><Trash2 size={15}/></button></div>{source.url && <a href={source.url} target="_blank" rel="noopener noreferrer">{source.url}</a>}<details><summary>View supplied excerpt</summary><pre>{source.content}</pre></details></div>) : <div className="empty-state"><BookOpen size={26}/><h3>No sources added</h3><p>Analysis is possible without sources, but any factual assertions must then be treated as unverified.</p></div>}
-          <div className="notice"><AlertTriangle size={17}/><span>Past results retain their claim records, but this MVP does not snapshot full source contents per run. Removing or changing the investigation's sources may affect later inspection of past citations.</span></div></div>}
+        {evidenceOpen && <>
+          <div className="scrim evidence-scrim" onClick={() => toggleEvidence(false)} aria-hidden="true"/>
+          <EvidencePanel investigation={active} adding={addingSource} onAddingChange={setAddingSource} onAdd={addSource}
+            onRemove={id => active && updateProject(active.id, item => ({ ...item, sources: item.sources.filter(s => s.id !== id) }))}
+            onClose={() => toggleEvidence(false)}/>
         </>}
-        <footer className="footer-note">PATTERN-FORMER · Evidence-sensitive analysis, not independent fact verification. Model outputs may be inaccurate.</footer>
-      </div></div>
+      </div>}
     </main>
+
+    {undo && <div className="toast" role="status">
+      <span>Deleted “{undo.item.name}”.</span>
+      <button type="button" className="link-button" onClick={restoreProject}>Undo</button>
+    </div>}
   </div>;
 }

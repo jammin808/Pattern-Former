@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Network } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import type { Account } from '../lib/types';
 import { getConfig, signInWithGoogle } from '../services/client';
 
@@ -52,12 +52,12 @@ export function SignIn({ onSignedIn, notice }: { onSignedIn: (account: Account) 
 
   return <div className="auth-screen">
     <div className="auth-card">
-      <div className="brand"><div className="brand-mark"><Network size={19}/></div><div><strong>PATTERN-FORMER</strong><span>REASONING WORKBENCH <b>0.2</b></span></div></div>
+      <div className="brand"><svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" className="brand-tile"/><path d="M8 19 L14 9 L20 19 M10.5 15 H17.5" className="brand-mark" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg><strong>Pattern-Former</strong></div>
       <h1>Sign in to continue</h1>
-      <p className="muted">Use your Google account. Each account has a monthly token allowance for analyses.</p>
+      <p className="muted">Test claims, decisions and documents against your own evidence. Each account has a monthly token allowance.</p>
       <div className="google-button" ref={buttonRef} aria-busy={busy}/>
       {busy && <p className="muted small">Signing in…</p>}
-      {error && <div className="error-banner" role="alert"><AlertTriangle size={16}/><span>{error}</span></div>}
+      {error && <div className="banner warning" role="alert"><AlertTriangle size={16}/><span>{error}</span></div>}
       <p className="muted small">We store your Google name, email and picture, plus how many tokens each analysis used. Investigations stay in this browser.</p>
     </div>
   </div>;

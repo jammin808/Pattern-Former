@@ -58,17 +58,24 @@ export const setDefaultLimit = (limit: number) =>
 export function exportJSON(investigation: Investigation): string {
   return JSON.stringify(investigation, null, 2);
 }
-export function exportMarkdown(investigation: Investigation): string {
-  const sourceIndex = new Map<string, EvidenceSource>(investigation.sources.map(s => [s.id, s]));
-  const lines = [`# ${investigation.name}`, '', 'PATTERN-FORMER report. User-supplied sources are NOT independently authenticated.', ''];
-  for (const run of investigation.results) {
-    lines.push(`## ${run.question}`, '', `Mode: ${run.mode} | Confidence: ${run.confidence} | Date: ${run.createdAt}`, '',
-      '### Framing', run.frame, '', '### Conclusion', run.conclusion, '', '### Claims');
-    for (const claim of run.claims) {
-      lines.push(`- **${claim.id} [${claim.support}]** ${claim.text}`);
-      for (const c of claim.citations) lines.push(`  - Source: ${sourceIndex.get(c.sourceId)?.title ?? c.sourceId}; quote ${c.quoteMatches ? 'located' : 'NOT located'}: "${c.excerpt}"`);
-    }
-    lines.push('', '### Challenges', ...run.challenges.map(c => `- **${c.severity}** ${c.objection} (${c.implication})`), '', '### Uncertainties', ...run.unknowns.map(u => `- ${u}`), '');
+const DEPTH_NAMES: Record<string, string> = { LIGHT: 'Quick', MEDIUM: 'Balanced', HEAVY: 'Thorough', ADVERSARIAL: 'Stress-test' };
+
+// One question and its answer as Markdown, used for copying a single answer and for full exports.
+export function resultMarkdown(run: AnalysisResult, sources: EvidenceSource[], heading = '##'): string {
+  const sourceIndex = new Map(sources.map(s => [s.id, s]));
+  const lines = [`${heading} ${run.question}`, '',
+    `${DEPTH_NAMES[run.mode] ?? run.mode} answer · Confidence: ${run.confidence.toLowerCase()} · ${new Date(run.createdAt).toLocaleString()}`, '',
+    `${heading}# Conclusion`, run.conclusion, '', `${heading}# Claims`];
+  for (const claim of run.claims) {
+    lines.push(`- **${claim.support}** ${claim.text}`);
+    for (const c of claim.citations) lines.push(`  - ${sourceIndex.get(c.sourceId)?.title ?? c.sourceId}, quote ${c.quoteMatches ? 'found in source' : 'NOT found in source'}: "${c.excerpt}"`);
   }
+  lines.push('', `${heading}# Objections`, ...run.challenges.map(c => `- **${c.severity.toLowerCase()}** ${c.objection} (${c.implication})`),
+    '', `${heading}# Framing`, run.frame, '', `${heading}# Open questions`, ...run.unknowns.map(u => `- ${u}`), '');
   return lines.join('\n');
+}
+
+export function exportMarkdown(investigation: Investigation): string {
+  return [`# ${investigation.name}`, '', 'Pattern-Former report. Sources were supplied by the user and are not independently authenticated.', '',
+    ...investigation.results.map(run => resultMarkdown(run, investigation.sources))].join('\n');
 }

@@ -1,7 +1,7 @@
 {
   "name": "pattern-former-workbench",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"tsx watch server/dev.ts\" \"vite --host 0.0.0.0\"",
@@ -13,7 +13,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
     "@google/genai": "^1.33.0",
+    "@supabase/supabase-js": "^2.118.0",
     "dotenv": "^17.2.3",
+    "jose": "^6.2.13",
     "lucide-react": "^0.561.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { quoteIsPresent, normaliseClaims, formatEvidence } from '../lib/claims';
 import { analysisRequestSchema } from '../lib/schema';
 import { configuredProvider } from '../lib/reasoning';
+import { isAdmin } from '../lib/auth';
 
 const source = { id: 's1', title: 'Study', content: 'The experiment involved 120 volunteers with no random assignment.' };
 const draft = {
@@ -42,4 +43,12 @@ test('prefers an Anthropic key from the environment, then Gemini', () => {
   assert.equal(configuredProvider({ ANTHROPIC_API_KEY: 'a', GEMINI_API_KEY: 'g' }), 'anthropic');
   assert.equal(configuredProvider({ GEMINI_API_KEY: 'g' }), 'gemini');
   assert.equal(configuredProvider({}), null);
+});
+test('admins come from ADMIN_EMAILS, case-insensitively', () => {
+  process.env.ADMIN_EMAILS = ' Owner@Example.com , second@example.com';
+  assert.equal(isAdmin('owner@example.com'), true);
+  assert.equal(isAdmin('SECOND@example.com'), true);
+  assert.equal(isAdmin('someone@example.com'), false);
+  delete process.env.ADMIN_EMAILS;
+  assert.equal(isAdmin('owner@example.com'), false);
 });

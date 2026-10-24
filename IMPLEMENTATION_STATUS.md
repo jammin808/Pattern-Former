@@ -19,11 +19,12 @@ Scope: Reviewable MVP, based on a code-level analysis of the Pattern-Former repo
 
 ## Not yet implemented
 
-- [x] Dependency install, `npm run typecheck`, `npm test` (5/5) and `npm run build` pass
+- [x] Dependency install, `npm run typecheck`, `npm test` (9/9) and `npm run build` pass
 - [ ] Live model API integration test (requires an API key)
 - [ ] Automated retrieval of external evidence, authenticated source provenance, or substantive entailment checking
 - [ ] True claim-to-claim dependency edges and automatic revision propagation
-- [ ] User accounts and server-side durable storage, permissions, quotas, abuse prevention
+- [x] Google sign-in, signed session cookies, per-user monthly token limits, admin page (usage, limits, block/unblock)
+- [ ] Per-minute rate limits, atomic token reservation, server-side storage of investigations
 - [ ] Uploading PDFs, extracting tables, file parsing and document safety sandboxing
 - [ ] Multi-model adapters, model registry or model price comparison
 - [ ] Benchmark suite measuring accuracy improvement over the baseline

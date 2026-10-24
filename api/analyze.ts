@@ -1,61 +1,43 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
 import { analysisRequestSchema } from '../lib/schema.js';
-import { configuredProvider, runAnalysis } from '../lib/reasoning.js';
+import { configuredModel, configuredProvider, runAnalysis, type TokenUsage } from '../lib/reasoning.js';
+import { HttpError, json, readBody, route } from '../lib/http.js';
+import { requireUser } from '../lib/auth.js';
+import { allowanceFor } from '../lib/account.js';
+import { recordUsage } from '../lib/db.js';
+import type { AnalysisResult } from '../lib/types.js';
 
-// Compatible with Vercel's Node serverless function convention and the local Node server.
-type ApiRequest = IncomingMessage & { body?: unknown };
-const LIMIT = 140_000;
-
-async function readBody(req: ApiRequest): Promise<unknown> {
-  if (req.body !== undefined) {
-    if (JSON.stringify(req.body).length > LIMIT) throw new Error('PAYLOAD_TOO_LARGE');
-    if (typeof req.body === 'string') {
-      try { return JSON.parse(req.body); } catch { throw new Error('INVALID_JSON'); }
+export default route({
+  async POST(req, res) {
+    const provider = configuredProvider();
+    if (!provider) throw new HttpError(503, 'Server is not configured with ANTHROPIC_API_KEY (or GEMINI_API_KEY).');
+    const user = await requireUser(req);
+    if (user.status === 'blocked') throw new HttpError(403, 'Your account has been blocked. Contact the administrator.');
+    // Checked before the run starts, so one run can take a user slightly past their limit.
+    const allowance = await allowanceFor(user);
+    if (allowance.limit !== null && allowance.monthTokens >= allowance.limit) {
+      throw new HttpError(429, `You have used your ${allowance.limit.toLocaleString('en')} token allowance for this month.`);
     }
-    return req.body;
-  }
-  let body = '';
-  for await (const chunk of req) {
-    body += chunk.toString();
-    if (body.length > LIMIT) throw new Error('PAYLOAD_TOO_LARGE');
-  }
-  try { return JSON.parse(body); } catch { throw new Error('INVALID_JSON'); }
-}
-
-function json(res: ServerResponse, code: number, value: unknown): void {
-  res.statusCode = code;
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.end(JSON.stringify(value));
-}
-
-export default async function handler(req: ApiRequest, res: ServerResponse): Promise<void> {
-  if (req.method !== 'POST') { json(res, 405, { error: 'Method not allowed.' }); return; }
-  if (req.headers['content-type']?.split(';')[0]?.trim() !== 'application/json') {
-    json(res, 415, { error: 'Content-Type must be application/json.' }); return;
-  }
-  if (!configuredProvider()) {
-    json(res, 503, { error: 'Server is not configured with ANTHROPIC_API_KEY (or GEMINI_API_KEY).' }); return;
-  }
-  try {
-    const body = await readBody(req);
-    const parsed = analysisRequestSchema.safeParse(body);
+    const parsed = analysisRequestSchema.safeParse(await readBody(req));
     if (!parsed.success) {
       json(res, 400, { error: 'Invalid request.', issues: parsed.error.issues.map(i => ({ path: i.path.join('.'), message: i.message })) });
       return;
     }
-    const result = await runAnalysis(parsed.data);
-    json(res, 200, result);
-  } catch (error) {
-    if (error instanceof Error && error.message === 'PAYLOAD_TOO_LARGE') {
-      json(res, 413, { error: 'Request is too large.' });
-    } else if (error instanceof Error && error.message === 'INVALID_JSON') {
-      json(res, 400, { error: 'Invalid JSON.' });
-    } else {
-      // Do not expose model/provider diagnostics or secret-bearing stack traces to clients.
+    const usage: TokenUsage = { input: 0, output: 0 };
+    let result: AnalysisResult | undefined;
+    try {
+      result = await runAnalysis(parsed.data, usage);
+    } catch (error) {
       console.error('Analysis failed:', error instanceof Error ? error.name + ': ' + error.message : 'Unknown error');
-      json(res, 502, { error: 'Analysis failed. Check server logs and model configuration.' });
     }
-  }
-}
+    // Recorded before responding (Vercel may pause the function once the response is sent),
+    // and for failed runs too, because tokens spent on failed stages still cost money.
+    if (usage.input + usage.output > 0) {
+      await recordUsage({
+        userId: user.id, mode: parsed.data.mode, provider, model: configuredModel(),
+        inputTokens: usage.input, outputTokens: usage.output, succeeded: Boolean(result),
+      }).catch(error => console.error('Usage recording failed:', error instanceof Error ? error.message : error));
+    }
+    if (!result) throw new HttpError(502, 'Analysis failed. Check server logs and model configuration.');
+    json(res, 200, result);
+  },
+});

@@ -44,7 +44,8 @@ export interface AnalysisResult {
   conclusion: string;
   confidence: Confidence;
   unknowns: string[];
-  methodology: { steps: string[]; model: string; durationMs: number };
+  // tokens is absent on results saved before usage tracking existed.
+  methodology: { steps: string[]; model: string; durationMs: number; tokens?: { input: number; output: number } };
 }
 export interface Investigation {
   id: string;
@@ -52,4 +53,17 @@ export interface Investigation {
   createdAt: string;
   sources: EvidenceSource[];
   results: AnalysisResult[];
+}
+export interface Allowance {
+  monthTokens: number;
+  limit: number | null; // null means unlimited (admins)
+}
+export interface Account {
+  user: { id: string; email: string; name: string | null; picture: string | null; status: 'active' | 'blocked'; isAdmin: boolean };
+  allowance: Allowance;
+}
+export interface AdminUser {
+  id: string; email: string; name: string | null; picture: string | null; status: 'active' | 'blocked';
+  monthly_token_limit: number | null; created_at: string; last_seen_at: string;
+  month_tokens: number; month_runs: number; lifetime_tokens: number; isAdmin: boolean;
 }

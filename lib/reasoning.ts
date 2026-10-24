@@ -21,10 +21,13 @@ function parseJSON(value: string): unknown {
 
 type Depth = 'low' | 'medium' | 'high';
 
+// Running token total for one analysis, including retries and failed stages.
+export interface TokenUsage { input: number; output: number }
+
 // A model provider returns schema-validated JSON for one reasoning stage.
 interface Provider {
   model: string;
-  generate<T extends z.ZodType>(schema: T, role: string, prompt: string, depth: Depth): Promise<z.output<T>>;
+  generate<T extends z.ZodType>(schema: T, role: string, prompt: string, depth: Depth, usage: TokenUsage): Promise<z.output<T>>;
 }
 
 // Credentials come only from the server environment. Anthropic is preferred when both keys are set.
@@ -36,10 +39,10 @@ export function configuredProvider(env: NodeJS.ProcessEnv = process.env): 'anthr
 
 function anthropicProvider(apiKey: string): Provider {
   const client = new Anthropic({ apiKey });
-  const model = process.env.ANTHROPIC_MODEL || 'claude-opus-5-5';
+  const model = configuredModel();
   return {
     model,
-    async generate(schema, role, prompt, depth) {
+    async generate(schema, role, prompt, depth, usage) {
       const response = await client.beta.messages.parse({
         model,
         max_tokens: 16000,
@@ -50,6 +53,14 @@ function anthropicProvider(apiKey: string): Provider {
         betas: ['server-side-fallback-2026-07-01'],
         fallbacks: 'default',
       });
+      // With a fallback, top-level usage covers only the final attempt; iterations list every attempt.
+      const attempts = response.usage.iterations?.length ? response.usage.iterations : [response.usage];
+      for (const attempt of attempts) {
+        if ('input_tokens' in attempt) {
+          usage.input += attempt.input_tokens + (attempt.cache_creation_input_tokens ?? 0) + (attempt.cache_read_input_tokens ?? 0);
+          usage.output += attempt.output_tokens;
+        }
+      }
       if (response.stop_reason === 'refusal') throw new Error(`Model declined the request (${response.stop_details?.category ?? 'unspecified'})`);
       if (response.stop_reason === 'max_tokens') throw new Error('Model response was truncated');
       if (response.parsed_output == null) throw new Error('Empty model response');
@@ -63,7 +74,7 @@ function geminiProvider(apiKey: string): Provider {
   const model = process.env.GEMINI_MODEL || 'gemini-3.1-pro-preview';
   return {
     model,
-    async generate(schema, role, prompt) {
+    async generate(schema, role, prompt, _depth, usage) {
       const response = await ai.models.generateContent({
         model,
         contents: prompt,
@@ -73,6 +84,8 @@ function geminiProvider(apiKey: string): Provider {
           temperature: 0.3,
         },
       });
+      usage.input += response.usageMetadata?.promptTokenCount ?? 0;
+      usage.output += (response.usageMetadata?.candidatesTokenCount ?? 0) + (response.usageMetadata?.thoughtsTokenCount ?? 0);
       const text = response.text;
       if (!text) throw new Error('Empty model response');
       return schema.parse(parseJSON(text));
@@ -81,12 +94,12 @@ function geminiProvider(apiKey: string): Provider {
 }
 
 async function generateJSON<T extends z.ZodType>(
-  provider: Provider, schema: T, role: string, prompt: string, depth: Depth
+  provider: Provider, schema: T, role: string, prompt: string, depth: Depth, usage: TokenUsage
 ): Promise<z.output<T>> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      return await provider.generate(schema, role, prompt, depth);
+      return await provider.generate(schema, role, prompt, depth, usage);
     } catch (error) {
       lastError = error;
     }
@@ -112,7 +125,15 @@ Explicitly revise an unsupported or overconfident conclusion and acknowledge unr
 Return JSON with conclusion: string, confidence: "HIGH"|"MEDIUM"|"LOW"|"UNKNOWN", unknowns: string[].
 This is a judgement with no independently authenticated source material. Do not claim factual verification.`;
 
-export async function runAnalysis(input: AnalysisRequest, env: NodeJS.ProcessEnv = process.env): Promise<AnalysisResult> {
+export function configuredModel(env: NodeJS.ProcessEnv = process.env): string {
+  return configuredProvider(env) === 'anthropic'
+    ? env.ANTHROPIC_MODEL || 'claude-opus-5-5'
+    : env.GEMINI_MODEL || 'gemini-3.1-pro-preview';
+}
+
+export async function runAnalysis(
+  input: AnalysisRequest, usage: TokenUsage = { input: 0, output: 0 }, env: NodeJS.ProcessEnv = process.env,
+): Promise<AnalysisResult> {
   const began = Date.now();
   const provider = configuredProvider(env) === 'anthropic'
     ? anthropicProvider(env.ANTHROPIC_API_KEY!)
@@ -125,10 +146,10 @@ export async function runAnalysis(input: AnalysisRequest, env: NodeJS.ProcessEnv
   const steps: string[] = ['Framing and claim extraction'];
   // The challenger never receives the analyst's output, preventing answer anchoring.
   const [draft, counter] = await Promise.all([
-    generateJSON(provider, analystSchema, fullAnalystRole, prompt, depth),
+    generateJSON(provider, analystSchema, fullAnalystRole, prompt, depth, usage),
     input.mode === 'LIGHT'
       ? Promise.resolve({ challenges: [] })
-      : generateJSON(provider, challengeSchema, `${CHALLENGER_ROLE}\n${input.mode === 'ADVERSARIAL' ? 'Apply especially rigorous falsification, inversion, and incentive-based critiques.' : 'Be proportional to the question.'}`, prompt, depth),
+      : generateJSON(provider, challengeSchema, `${CHALLENGER_ROLE}\n${input.mode === 'ADVERSARIAL' ? 'Apply especially rigorous falsification, inversion, and incentive-based critiques.' : 'Be proportional to the question.'}`, prompt, depth, usage),
   ]);
   const claims = normaliseClaims(draft, input.sources);
   if (input.mode !== 'LIGHT') steps.push('Independent adversarial analysis');
@@ -138,7 +159,7 @@ export async function runAnalysis(input: AnalysisRequest, env: NodeJS.ProcessEnv
   let unknowns = draft.unknowns;
   if (deep) {
     const verdict = await generateJSON(provider, adjudicationSchema, ADJUDICATOR_ROLE,
-      `ORIGINAL QUESTION: ${input.question}\nSOURCE INDEX: ${input.sources.map(s => `${s.id}: ${s.title}`).join('; ') || 'No sources'}\nANALYST DRAFT: ${JSON.stringify({ ...draft, claims })}\nINDEPENDENT CHALLENGES: ${JSON.stringify(counter.challenges)}`, depth
+      `ORIGINAL QUESTION: ${input.question}\nSOURCE INDEX: ${input.sources.map(s => `${s.id}: ${s.title}`).join('; ') || 'No sources'}\nANALYST DRAFT: ${JSON.stringify({ ...draft, claims })}\nINDEPENDENT CHALLENGES: ${JSON.stringify(counter.challenges)}`, depth, usage
     );
     conclusion = verdict.conclusion;
     confidence = verdict.confidence;
@@ -150,6 +171,6 @@ export async function runAnalysis(input: AnalysisRequest, env: NodeJS.ProcessEnv
     id: crypto.randomUUID(), question: input.question, mode: input.mode, createdAt: new Date().toISOString(),
     frame: draft.frame, assumptions: draft.assumptions, hypotheses: draft.hypotheses,
     claims, challenges: counter.challenges, conclusion, confidence, unknowns,
-    methodology: { steps, model: provider.model, durationMs: Date.now() - began },
+    methodology: { steps, model: provider.model, durationMs: Date.now() - began, tokens: { ...usage } },
   };
 }
